@@ -1,0 +1,22 @@
+name: micro-nuculei-nuclear-buds-detection
+display_name: Micro-Nuclei and Nuclear Buds Detection
+version: 0.1.0
+license: MIT
+description: A napari plugin for detecting micro-nuclei and nuclear buds in biological images
+contributions:
+  commands:
+    - id: micro-nuculei-nuclear-buds-detection.detect
+      title: Detect Micro-Nuclei and Nuclear Buds
+      python_name: micro_nuculei_nuclear_buds_detection._widget:DetectionWidget
+    - id: micro-nuculei-nuclear-buds-detection.data_management
+      title: Data Management
+      python_name: micro_nuculei_nuclear_buds_detection._data_management_widget:DataManagementWidget
+  widgets:
+    - command: micro-nuculei-nuclear-buds-detection.detect
+      display_name: Micro-Nuclei Detection
+      autogenerate: true
+    - command: micro-nuculei-nuclear-buds-detection.data_management
+      display_name: Data Management
+      autogenerate: true
+npe2: "0.1.0"
+
