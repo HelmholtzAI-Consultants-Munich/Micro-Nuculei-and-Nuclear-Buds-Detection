@@ -7,7 +7,7 @@ import napari
 from napari.utils.notifications import show_info, show_warning
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
 from qtpy.QtCore import Qt
-from qtpy.QtGui import QColor, QPalette
+from qtpy.QtGui import QColor
 
 from ._constants import CLASS_COLORS, CLASS_NAMES, get_napari_color
 
@@ -19,6 +19,9 @@ class DetectionWidget(QWidget):
         super().__init__()
         self.viewer = napari_viewer
         self.current_class_id = 0  # Default to micro-nuclei
+        
+        # Track shape count to detect new shapes
+        self._shape_count_at_selection = 0
 
         # Create layout
         self.setLayout(QVBoxLayout())
@@ -26,255 +29,233 @@ class DetectionWidget(QWidget):
         # Add title
         title = QLabel("Micro-Nuclei and Nuclear Buds Detection")
         title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("font-weight: bold; font-size: 14px; margin: 10px;")
         self.layout().addWidget(title)
 
         # Annotation class selection
-        class_label = QLabel("Annotation Class:")
+        class_label = QLabel("Select Annotation Class:")
+        class_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         self.layout().addWidget(class_label)
         
-        # Create color selection boxes
-        color_layout = QHBoxLayout()
-        self.color_buttons = {}
+        # Create class selection buttons
+        button_layout = QHBoxLayout()
+        self.class_buttons = {}
         
         for class_id in sorted(CLASS_COLORS.keys()):
             color = CLASS_COLORS[class_id]
             class_name = CLASS_NAMES[class_id]
             
-            # Create button with colored background
-            color_button = QPushButton(class_name.replace("-", " ").title())
-            color_button.setCheckable(True)
-            color_button.setAutoExclusive(True)
+            # Create button
+            button = QPushButton(class_name.replace("-", " ").title())
+            button.setCheckable(True)
+            button.setAutoExclusive(True)
             
-            # Set button color
-            qcolor = QColor(color[0], color[1], color[2])
-            palette = color_button.palette()
-            palette.setColor(QPalette.Button, qcolor)
-            palette.setColor(QPalette.ButtonText, Qt.white)
-            color_button.setPalette(palette)
-            color_button.setStyleSheet(
+            # Style button with class color
+            button.setStyleSheet(
                 f"QPushButton {{"
                 f"background-color: rgb({color[0]}, {color[1]}, {color[2]});"
                 f"color: white;"
                 f"font-weight: bold;"
-                f"border: 2px solid black;"
-                f"padding: 5px;"
+                f"border: 2px solid #333;"
+                f"border-radius: 5px;"
+                f"padding: 8px 15px;"
+                f"min-height: 30px;"
+                f"}}"
+                f"QPushButton:hover {{"
+                f"border: 2px solid white;"
                 f"}}"
                 f"QPushButton:checked {{"
                 f"border: 3px solid white;"
+                f"background-color: rgb({min(255, color[0] + 20)}, {min(255, color[1] + 20)}, {min(255, color[2] + 20)});"
                 f"}}"
             )
             
             # Connect click handler
-            color_button.clicked.connect(
+            button.clicked.connect(
                 lambda checked, cid=class_id: self._on_class_selected(cid)
             )
             
-            self.color_buttons[class_id] = color_button
-            color_layout.addWidget(color_button)
+            self.class_buttons[class_id] = button
+            button_layout.addWidget(button)
         
         # Set first button as checked by default
-        if self.color_buttons:
-            self.color_buttons[0].setChecked(True)
+        if self.class_buttons:
+            self.class_buttons[0].setChecked(True)
         
-        self.layout().addLayout(color_layout)
+        self.layout().addLayout(button_layout)
 
         # Detection button
         self.detect_button = QPushButton("Detect")
+        self.detect_button.setStyleSheet(
+            "QPushButton {"
+            "background-color: #4CAF50;"
+            "color: white;"
+            "font-weight: bold;"
+            "border: none;"
+            "border-radius: 5px;"
+            "padding: 10px;"
+            "margin-top: 15px;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #45a049;"
+            "}"
+        )
         self.detect_button.clicked.connect(self._on_detect_clicked)
         self.layout().addWidget(self.detect_button)
 
         # Add stretch to push everything to top
         self.layout().addStretch()
 
+    def _get_annotations_layer(self):
+        """Get or create the annotations shapes layer."""
+        # Find existing annotations layer
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Shapes) and layer.name == "annotations":
+                return layer
+        return None
+
     def _on_class_selected(self, class_id: int):
         """Handle class selection - update drawing color and set rectangle tool."""
         self.current_class_id = class_id
         
-        # Get the napari color for this class
-        color = get_napari_color(class_id)
-        
-        # Find or create the single "annotations" layer
-        shapes_layer = None
-        for layer in self.viewer.layers:
-            if isinstance(layer, napari.layers.Shapes):
-                if layer.name == "annotations":
-                    shapes_layer = layer
-                    break
-        
-        # If no annotations layer exists, create one
+        # Get the annotations layer
+        shapes_layer = self._get_annotations_layer()
         if shapes_layer is None:
             show_warning("No annotations layer found. Please load an image first.")
             return
         
-        # Deselect any selected shapes to prevent color changes to existing shapes
-        if hasattr(shapes_layer, 'selected_data') and len(shapes_layer.selected_data) > 0:
-            shapes_layer.selected_data = set()
+        # Deselect any selected shapes
+        shapes_layer.selected_data = set()
         
-        # Store the number of shapes before any new ones are added
-        # This helps us identify which shape is newly added
-        self._previous_shape_count = len(shapes_layer.data)
+        # Store current shape count
+        self._shape_count_at_selection = len(shapes_layer.data)
         
-        # Set the current drawing color for new shapes
-        # This will be the default color napari uses when drawing new shapes
+        # Get the napari color for this class
+        color = get_napari_color(class_id)
         color_rgba = np.array([color[0], color[1], color[2], 1.0])
-        color_rgba_2d = np.array([[color[0], color[1], color[2], 1.0]])
         
-        # Set the default color for new shapes
-        # Napari uses the last color in the edge_color array as the default for new shapes
-        if len(shapes_layer.data) == 0:
-            # No shapes exist, just set the default color
-            shapes_layer.edge_color = color_rgba_2d
-        else:
-            # There are existing shapes - append the new color to existing colors
-            # Napari will use the last color as default for new shapes
-            current_colors = shapes_layer.edge_color
-            
-            # Ensure we have a 2D array
-            if not isinstance(current_colors, np.ndarray):
-                current_colors = np.array(current_colors)
-            if current_colors.ndim == 1:
-                current_colors = current_colors.reshape(1, -1)
-            
-            # Clean up: remove any extra colors beyond the number of shapes
-            # (from previous class changes where default was appended but no shape was drawn)
-            n_shapes = len(shapes_layer.data)
-            if current_colors.shape[0] > n_shapes:
-                # Trim to match number of shapes
-                current_colors = current_colors[:n_shapes]
-            
-            # Append the new color to the existing colors
-            # This makes napari use it as the default for new shapes
-            updated_colors = np.vstack([current_colors, color_rgba_2d])
-            shapes_layer.edge_color = updated_colors
+        # Set the default color for new shapes using current_edge_color if available
+        # This is the cleanest way and doesn't affect existing shapes
+        try:
+            if hasattr(shapes_layer, 'current_edge_color'):
+                shapes_layer.current_edge_color = color_rgba
+            else:
+                # Fallback: use edge_color array approach
+                self._set_default_color_via_array(shapes_layer, color_rgba)
+        except Exception as e:
+            # If current_edge_color doesn't work, use array approach
+            self._set_default_color_via_array(shapes_layer, color_rgba)
         
         # Set the shapes layer as active
         self.viewer.layers.selection.active = shapes_layer
         
         # Set rectangle tool
         try:
-            if hasattr(shapes_layer, 'mode'):
-                shapes_layer.mode = 'add_rectangle'
-            self.viewer.cursor = 'cross'
+            shapes_layer.mode = 'add_rectangle'
         except Exception:
             pass
         
-        # Connect to shape addition event to set color for new shapes
-        # We'll use a callback to update the color of newly added shapes
-        # Check if we've already connected to this layer
-        if not hasattr(shapes_layer, '_annotation_color_connected'):
-            shapes_layer.events.data.connect(self._on_shape_added)
-            shapes_layer._annotation_color_connected = True
+        # Connect to shape addition event if not already connected
+        if not hasattr(shapes_layer, '_color_callback_connected'):
+            shapes_layer.events.data.connect(self._on_shape_data_changed)
+            shapes_layer._color_callback_connected = True
         
-        show_info(f"Selected class: {CLASS_NAMES[class_id]} - new shapes will be {CLASS_NAMES[class_id]}")
-    
-    def _on_shape_added(self, event):
-        """Handle when a new shape is added - set its color based on current class."""
+        show_info(f"Selected class: {CLASS_NAMES[class_id]}")
+
+    def _set_default_color_via_array(self, shapes_layer, color_rgba):
+        """Set default color using edge_color array (fallback method)."""
+        n_shapes = len(shapes_layer.data)
+        color_rgba_2d = color_rgba.reshape(1, -1) if color_rgba.ndim == 1 else color_rgba
+        
+        if n_shapes == 0:
+            # No shapes - just set the default color
+            shapes_layer.edge_color = color_rgba_2d
+        else:
+            # Get current colors
+            current_colors = shapes_layer.edge_color
+            
+            # Convert to numpy array
+            if not isinstance(current_colors, np.ndarray):
+                current_colors = np.array(current_colors)
+            if current_colors.ndim == 1:
+                current_colors = current_colors.reshape(1, -1)
+            
+            # Ensure we have exactly n_shapes colors (remove any appended defaults)
+            if current_colors.shape[0] > n_shapes:
+                current_colors = current_colors[:n_shapes]
+            elif current_colors.shape[0] < n_shapes:
+                # Pad with last color
+                if current_colors.shape[0] > 0:
+                    last_color = current_colors[-1]
+                    padding = np.tile(last_color, (n_shapes - current_colors.shape[0], 1))
+                    current_colors = np.vstack([current_colors, padding])
+                else:
+                    current_colors = np.tile(color_rgba, (n_shapes, 1))
+            
+            # Append default color for new shapes
+            # Napari uses the last color as default
+            updated_colors = np.vstack([current_colors, color_rgba_2d])
+            shapes_layer.edge_color = updated_colors
+
+    def _on_shape_data_changed(self, event):
+        """Handle when shape data changes - set color for new shapes."""
         shapes_layer = event.source
         if shapes_layer.name != "annotations":
+            return
+        
+        n_shapes = len(shapes_layer.data)
+        
+        # Only process if new shapes were added
+        if n_shapes <= self._shape_count_at_selection:
             return
         
         # Get current class color
         color = get_napari_color(self.current_class_id)
         color_rgba = np.array([color[0], color[1], color[2], 1.0])
         
-        # Get current number of shapes
-        n_shapes = len(shapes_layer.data)
-        if n_shapes == 0:
-            return
-        
-        # Get the previous shape count (stored when class was selected)
-        previous_count = getattr(self, '_previous_shape_count', 0)
-        
-        # Only update colors if new shapes were actually added
-        if n_shapes <= previous_count:
-            return
-        
-        # Get current edge colors - this should already be per-shape if shapes exist
+        # Get current colors
         current_colors = shapes_layer.edge_color
         
-        # Convert to numpy array if needed
+        # Convert to numpy array
         if not isinstance(current_colors, np.ndarray):
             current_colors = np.array(current_colors)
-        
-        # Ensure we have a 2D array (n_shapes, 4) for RGBA
         if current_colors.ndim == 1:
             current_colors = current_colors.reshape(1, -1)
         
-        # Now handle the color array
-        # Note: We may have one extra color (the default color appended when class was selected)
-        if current_colors.shape[0] == previous_count:
-            # Perfect case: we have exactly the right number of colors for existing shapes
-            # Just append the new color(s)
-            new_colors = np.tile(color_rgba, (n_shapes - previous_count, 1))
-            current_colors = np.vstack([current_colors, new_colors])
-        elif current_colors.shape[0] == previous_count + 1:
-            # We have one extra color (the default color we appended when class was selected)
-            # The last color is the default for new shapes
-            # Keep existing colors for previous shapes, use default for first new shape, add more if needed
-            existing_colors = current_colors[:previous_count]  # Colors for existing shapes
-            default_color = current_colors[-1]  # The default color we appended
-            n_new_shapes = n_shapes - previous_count
-            
-            # Use default color for new shapes (it should match current class color)
-            new_colors = np.tile(default_color, (n_new_shapes, 1))
-            current_colors = np.vstack([existing_colors, new_colors])
-            
-            # Ensure new shapes use the current class color (in case default doesn't match)
-            for i in range(previous_count, n_shapes):
-                current_colors[i] = color_rgba
-        elif current_colors.shape[0] == 1 and previous_count > 0:
-            # Single color for all - we need to preserve existing shapes' colors
-            # Since we don't know the actual colors, we'll keep the single color for existing
-            # and add new color for new shapes
-            existing_colors = np.tile(current_colors[0], (previous_count, 1))
-            new_colors = np.tile(color_rgba, (n_shapes - previous_count, 1))
-            current_colors = np.vstack([existing_colors, new_colors])
-        elif current_colors.shape[0] == 1 and previous_count == 0:
-            # Single color, no previous shapes - just expand with new color
-            current_colors = np.tile(color_rgba, (n_shapes, 1))
-        elif current_colors.shape[0] < previous_count:
-            # Fewer colors than shapes - pad with last color for existing, add new
-            last_color = current_colors[-1] if current_colors.shape[0] > 0 else color_rgba
-            padding = np.tile(last_color, (previous_count - current_colors.shape[0], 1))
-            existing_colors = np.vstack([current_colors, padding])
-            new_colors = np.tile(color_rgba, (n_shapes - previous_count, 1))
-            current_colors = np.vstack([existing_colors, new_colors])
-        elif current_colors.shape[0] > previous_count + 1:
-            # More colors than expected (more than one extra) - trim to previous, add new
-            existing_colors = current_colors[:previous_count]
-            new_colors = np.tile(color_rgba, (n_shapes - previous_count, 1))
-            current_colors = np.vstack([existing_colors, new_colors])
+        # Ensure we have the right number of colors
+        n_existing = self._shape_count_at_selection
+        n_new = n_shapes - n_existing
+        
+        if current_colors.shape[0] == n_existing:
+            # Perfect - just append new colors
+            new_colors = np.tile(color_rgba, (n_new, 1))
+            updated_colors = np.vstack([current_colors, new_colors])
+        elif current_colors.shape[0] > n_existing:
+            # We have extra colors (might include a default)
+            # Keep existing colors, add new ones
+            existing_colors = current_colors[:n_existing]
+            new_colors = np.tile(color_rgba, (n_new, 1))
+            updated_colors = np.vstack([existing_colors, new_colors])
         else:
-            # Shouldn't happen, but handle it
-            if current_colors.shape[0] < n_shapes:
-                new_colors = np.tile(color_rgba, (n_shapes - current_colors.shape[0], 1))
-                current_colors = np.vstack([current_colors, new_colors])
-            elif current_colors.shape[0] > n_shapes:
-                current_colors = current_colors[:n_shapes]
-        
-        # Ensure we have exactly n_shapes colors
-        if current_colors.shape[0] != n_shapes:
-            if current_colors.shape[0] > n_shapes:
-                current_colors = current_colors[:n_shapes]
+            # Fewer colors than expected - pad and add new
+            if current_colors.shape[0] > 0:
+                last_color = current_colors[-1]
+                padding = np.tile(last_color, (n_existing - current_colors.shape[0], 1))
+                existing_colors = np.vstack([current_colors, padding])
             else:
-                padding = np.tile(color_rgba, (n_shapes - current_colors.shape[0], 1))
-                current_colors = np.vstack([current_colors, padding])
+                existing_colors = np.tile(color_rgba, (n_existing, 1))
+            new_colors = np.tile(color_rgba, (n_new, 1))
+            updated_colors = np.vstack([existing_colors, new_colors])
         
-        # Only update colors for newly added shapes (from previous_count onwards)
-        # This ensures existing shapes keep their colors
-        for i in range(previous_count, n_shapes):
-            current_colors[i] = color_rgba
+        # Deselect shapes before updating colors
+        shapes_layer.selected_data = set()
         
-        # Update the layer's edge colors
-        # Make sure no shapes are selected before updating to avoid affecting selected shapes
-        if hasattr(shapes_layer, 'selected_data') and len(shapes_layer.selected_data) > 0:
-            shapes_layer.selected_data = set()
+        # Update colors
+        shapes_layer.edge_color = updated_colors
         
-        shapes_layer.edge_color = current_colors
-        
-        # Update the previous count for next time
-        self._previous_shape_count = n_shapes
-    
+        # Update shape count
+        self._shape_count_at_selection = n_shapes
+
     def _on_detect_clicked(self):
         """Handle detect button click."""
         if len(self.viewer.layers) == 0:
@@ -283,4 +264,3 @@ class DetectionWidget(QWidget):
 
         # TODO: Implement detection logic
         show_info("Detection functionality to be implemented.")
-

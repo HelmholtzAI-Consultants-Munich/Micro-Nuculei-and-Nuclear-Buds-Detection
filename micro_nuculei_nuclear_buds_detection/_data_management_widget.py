@@ -21,9 +21,10 @@ from qtpy.QtWidgets import (
     QPushButton,
     QLabel,
     QLineEdit,
-    QListWidget,
-    QListWidgetItem,
+    QTreeWidget,
+    QTreeWidgetItem,
     QFileDialog,
+    QSizePolicy,
 )
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QColor
@@ -53,9 +54,8 @@ class DataManagementWidget(QWidget):
 
         # Setup UI
         self._setup_ui()
-
-        # Add stretch to push everything to top
-        self.layout().addStretch()
+        
+        # Don't add stretch - let the tree widget expand to fill space
 
     def _setup_ui(self):
         """Set up the user interface."""
@@ -74,14 +74,21 @@ class DataManagementWidget(QWidget):
         folder_layout.addWidget(browse_button)
         self.layout().addLayout(folder_layout)
 
-        # Image list
+        # Image tree (hierarchical view)
         list_label = QLabel("Images:")
         self.layout().addWidget(list_label)
 
-        self.image_list = QListWidget()
-        self.image_list.setMaximumHeight(150)
-        self.image_list.itemClicked.connect(self._on_image_item_clicked)
-        self.layout().addWidget(self.image_list)
+        self.image_tree = QTreeWidget()
+        self.image_tree.setHeaderLabel("Images")
+        self.image_tree.setRootIsDecorated(True)  # Show expand/collapse icons
+        self.image_tree.itemClicked.connect(self._on_tree_item_clicked)
+        self.image_tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
+        # Make tree expand to fill available vertical space
+        size_policy = QSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        self.image_tree.setSizePolicy(size_policy)
+        self.layout().addWidget(self.image_tree)
+        
+        # We'll store path/index in the item's data instead of using a dict
 
         # Navigation button
         self.next_unannotated_button = QPushButton("Next Unannotated Image")
@@ -103,21 +110,23 @@ class DataManagementWidget(QWidget):
             self._update_image_list()
 
     def _scan_images(self):
-        """Scan the dataset folder for .tif and .tiff images."""
+        """Scan the dataset folder recursively for .tif and .tiff images."""
         if not self.dataset_path or not self.dataset_path.exists():
             return
 
         self.image_files = []
         extensions = {".tif", ".tiff", ".TIF", ".TIFF"}
         
+        # Recursively scan for images in all subdirectories
         for ext in extensions:
-            self.image_files.extend(self.dataset_path.glob(f"*{ext}"))
+            # Use rglob to search recursively
+            self.image_files.extend(self.dataset_path.rglob(f"*{ext}"))
         
-        # Sort for consistent ordering
+        # Sort for consistent ordering (by full path)
         self.image_files.sort()
         
         if self.image_files:
-            show_info(f"Found {len(self.image_files)} image(s) in dataset folder.")
+            show_info(f"Found {len(self.image_files)} image(s) in dataset folder (including subdirectories).")
         else:
             show_warning("No .tif or .tiff images found in the selected folder.")
 
@@ -126,34 +135,98 @@ class DataManagementWidget(QWidget):
         if not self.annotation_dir:
             return False
         
-        # Check if annotation file exists (using image name with .txt extension for YOLO format)
-        annotation_file = self.annotation_dir / f"{image_path.stem}.txt"
+        # Get relative path from dataset folder to preserve subdirectory structure
+        try:
+            relative_path = image_path.relative_to(self.dataset_path)
+            # Create annotation path preserving subdirectory structure
+            annotation_file = self.annotation_dir / relative_path.with_suffix('.txt')
+        except ValueError:
+            # If image_path is not relative to dataset_path, use just the stem
+            annotation_file = self.annotation_dir / f"{image_path.stem}.txt"
+        
         return annotation_file.exists()
 
     def _update_image_list(self):
-        """Update the image list widget with color coding."""
-        self.image_list.clear()
+        """Update the image tree widget with hierarchical folder structure."""
+        self.image_tree.clear()
         
         if not self.image_files:
             self.next_unannotated_button.setEnabled(False)
             return
 
+        # Build a tree structure from image paths
+        root_item = self.image_tree.invisibleRootItem()
+        folder_items = {}  # Map folder paths to tree items
+        
         for i, image_path in enumerate(self.image_files):
-            item = QListWidgetItem(image_path.name)
+            # Get relative path from dataset folder
+            try:
+                relative_path = image_path.relative_to(self.dataset_path)
+            except ValueError:
+                relative_path = Path(image_path.name)
+            
+            # Get path parts (e.g., ["images_1", "image.tif"] or ["folder", "subfolder", "image.tif"])
+            parts = list(relative_path.parts)
+            
+            # Build folder structure
+            current_parent = root_item
+            current_path = Path(self.dataset_path)
+            
+            # Create folder items for each directory in the path
+            for part_idx, part in enumerate(parts[:-1]):  # All parts except the filename
+                current_path = current_path / part
+                folder_key = str(current_path)
+                
+                if folder_key not in folder_items:
+                    # Create new folder item
+                    folder_item = QTreeWidgetItem(current_parent)
+                    folder_item.setText(0, part)
+                    folder_item.setExpanded(True)  # Expand by default
+                    folder_item.setChildIndicatorPolicy(QTreeWidgetItem.ShowIndicator)
+                    # Set folder icon if available
+                    try:
+                        from qtpy.QtGui import QIcon
+                        from qtpy.QtWidgets import QFileIconProvider
+                        icon_provider = QFileIconProvider()
+                        folder_item.setIcon(0, icon_provider.icon(QFileIconProvider.Folder))
+                    except Exception:
+                        pass
+                    folder_items[folder_key] = folder_item
+                    current_parent = folder_item
+                else:
+                    current_parent = folder_items[folder_key]
+            
+            # Create image item (leaf node)
+            filename = parts[-1]
+            image_item = QTreeWidgetItem(current_parent)
+            image_item.setText(0, filename)
+            # Set file icon if available
+            try:
+                from qtpy.QtGui import QIcon
+                from qtpy.QtWidgets import QFileIconProvider
+                icon_provider = QFileIconProvider()
+                image_item.setIcon(0, icon_provider.icon(QFileIconProvider.File))
+            except Exception:
+                pass
+            
+            # Store image path and index in the item's data (using Qt.UserRole)
+            # This allows us to retrieve it later without needing a hashable key
+            image_item.setData(0, Qt.UserRole, (str(image_path), i))
             
             # Color code: green for annotated, red for not annotated
             if self._is_annotated(image_path):
-                item.setForeground(QColor(0, 150, 0))  # Green
-                item.setToolTip(f"{image_path.name} - Annotated")
+                image_item.setForeground(0, QColor(0, 150, 0))  # Green
+                image_item.setToolTip(0, f"{relative_path} - Annotated\nFull path: {image_path}")
             else:
-                item.setForeground(QColor(200, 0, 0))  # Red
-                item.setToolTip(f"{image_path.name} - Not annotated")
+                image_item.setForeground(0, QColor(200, 0, 0))  # Red
+                image_item.setToolTip(0, f"{relative_path} - Not annotated\nFull path: {image_path}")
             
             # Highlight current image
             if i == self.current_image_index:
-                item.setBackground(QColor(200, 200, 255))  # Light blue
-            
-            self.image_list.addItem(item)
+                image_item.setBackground(0, QColor(200, 200, 255))  # Light blue
+        
+        # Expand all folders by default
+        self.image_tree.expandAll()
         
         # Enable next button if there are unannotated images
         has_unannotated = any(not self._is_annotated(img) for img in self.image_files)
@@ -307,27 +380,51 @@ class DataManagementWidget(QWidget):
                         )
         
         # Save to YOLO format (.txt file)
-        annotation_file = self.annotation_dir / f"{current_image.stem}.txt"
+        # Preserve subdirectory structure in annotations folder
+        try:
+            relative_path = current_image.relative_to(self.dataset_path)
+            # Create annotation path preserving subdirectory structure
+            annotation_file = self.annotation_dir / relative_path.with_suffix('.txt')
+            # Create parent directories if they don't exist
+            annotation_file.parent.mkdir(parents=True, exist_ok=True)
+        except ValueError:
+            # Fallback: if path is not relative, use just the stem
+            annotation_file = self.annotation_dir / f"{current_image.stem}.txt"
         
         with open(annotation_file, 'w') as f:
             f.writelines(yolo_annotations)
         
-        show_info(f"Annotations saved in YOLO format for {current_image.name}")
+        # Show relative path in message
+        try:
+            display_path = str(current_image.relative_to(self.dataset_path))
+        except ValueError:
+            display_path = current_image.name
+        show_info(f"Annotations saved in YOLO format for {display_path}")
 
-    def _on_image_item_clicked(self, item: QListWidgetItem):
-        """Handle click on an image item in the list."""
-        # Find the image path corresponding to the clicked item
-        image_name = item.text()
-        for i, image_path in enumerate(self.image_files):
-            if image_path.name == image_name:
-                # Save current annotations if we have a current image
-                if self.current_image_index >= 0 and self.current_image_index != i:
-                    self._save_current_annotations()
-                
-                self.current_image_index = i
-                self._load_image(image_path)
-                self._update_image_list()
-                break
+    def _on_tree_item_clicked(self, item: QTreeWidgetItem, column: int):
+        """Handle click on a tree item (folder or image)."""
+        # Check if this item has data (meaning it's an image, not a folder)
+        item_data = item.data(0, Qt.UserRole)
+        if item_data is not None:
+            # This is an image item - load it
+            image_path_str, image_index = item_data
+            image_path = Path(image_path_str)
+            
+            # Save current annotations if we have a current image
+            if self.current_image_index >= 0 and self.current_image_index != image_index:
+                self._save_current_annotations()
+            
+            self.current_image_index = image_index
+            self._load_image(image_path)
+            self._update_image_list()  # Refresh to update highlighting
+        # For folder items, expansion/collapse is handled automatically by QTreeWidget
+    
+    def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
+        """Handle double-click on a tree item."""
+        # Double-click on image loads it (same as single click)
+        item_data = item.data(0, Qt.UserRole)
+        if item_data is not None:
+            self._on_tree_item_clicked(item, column)
 
     def _load_annotations(self, image_path: Path):
         """Load annotations from YOLO format (.txt) file if it exists."""
@@ -335,7 +432,15 @@ class DataManagementWidget(QWidget):
             show_warning("Annotation directory not set.")
             return False
         
-        annotation_file = self.annotation_dir / f"{image_path.stem}.txt"
+        # Get annotation file path preserving subdirectory structure
+        try:
+            relative_path = image_path.relative_to(self.dataset_path)
+            # Create annotation path preserving subdirectory structure
+            annotation_file = self.annotation_dir / relative_path.with_suffix('.txt')
+        except ValueError:
+            # Fallback: if path is not relative, use just the stem
+            annotation_file = self.annotation_dir / f"{image_path.stem}.txt"
+        
         if not annotation_file.exists():
             show_warning(f"Annotation file not found: {annotation_file}")
             return False
@@ -429,16 +534,26 @@ class DataManagementWidget(QWidget):
                 shapes_layer.edge_width = 2
                 annotations_loaded = True
             
+            # Get display path for messages
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except ValueError:
+                display_path = image_path.name
+            
             if annotations_loaded:
-                show_info(f"Loaded annotations for {image_path.name}")
+                show_info(f"Loaded annotations for {display_path}")
             else:
-                show_warning(f"No valid annotations found in file for {image_path.name}")
+                show_warning(f"No valid annotations found in file for {display_path}")
             
             return annotations_loaded
             
         except Exception as e:
             import traceback
-            error_msg = f"Error loading annotations for {image_path.name}: {str(e)}\n{traceback.format_exc()}"
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except ValueError:
+                display_path = image_path.name
+            error_msg = f"Error loading annotations for {display_path}: {str(e)}\n{traceback.format_exc()}"
             show_warning(error_msg)
             return False
 
@@ -483,10 +598,20 @@ class DataManagementWidget(QWidget):
                 # Set edge width to make it more visible
                 shapes_layer.edge_width = 2
             
-            show_info(f"Loaded: {image_path.name}")
+            # Get display path for message
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except ValueError:
+                display_path = image_path.name
+            
+            show_info(f"Loaded: {display_path}")
             
         except Exception as e:
-            show_warning(f"Error loading image {image_path.name}: {str(e)}")
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except ValueError:
+                display_path = image_path.name
+            show_warning(f"Error loading image {display_path}: {str(e)}")
 
     def _on_next_unannotated(self):
         """Move to the next unannotated image."""
