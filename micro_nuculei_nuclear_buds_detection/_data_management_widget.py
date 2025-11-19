@@ -13,6 +13,8 @@ from ._constants import (
     CLASS_NAMES,
     get_napari_color,
     get_class_from_napari_color,
+    ANNOTATION_LAYER_NAME,
+    NUCLEI_SEGMENTATION_LAYER_NAME,
 )
 from qtpy.QtWidgets import (
     QWidget,
@@ -28,7 +30,8 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QColor
-from skimage import io
+from skimage import io, measure
+import colorsys
 
 
 class DataManagementWidget(QWidget):
@@ -43,6 +46,7 @@ class DataManagementWidget(QWidget):
         self.image_files: List[Path] = []
         self.current_image_index: int = -1
         self.annotation_dir: Optional[Path] = None
+        self.nuclei_segmentation_dir: Optional[Path] = None
 
         # Create layout
         self.setLayout(QVBoxLayout())
@@ -106,6 +110,8 @@ class DataManagementWidget(QWidget):
             self.folder_path_edit.setText(str(self.dataset_path))
             self.annotation_dir = self.dataset_path / "annotations"
             self.annotation_dir.mkdir(exist_ok=True)
+            self.nuclei_segmentation_dir = self.dataset_path / "nuclei-segmentation"
+            self.nuclei_segmentation_dir.mkdir(exist_ok=True)
             self._scan_images()
             self._update_image_list()
 
@@ -264,120 +270,85 @@ class DataManagementWidget(QWidget):
         # Collect all annotations in YOLO format
         yolo_annotations = []
         
+        # Only process the annotation layer with the unique name
+        annotation_layer = None
         for layer in self.viewer.layers:
-            # Skip image layers
-            if isinstance(layer, napari.layers.Image):
-                continue
+            if isinstance(layer, napari.layers.Shapes) and layer.name == ANNOTATION_LAYER_NAME:
+                annotation_layer = layer
+                break
+        
+        if annotation_layer is None:
+            show_warning(f"No annotation layer '{ANNOTATION_LAYER_NAME}' found. Nothing to save.")
+            return
+        
+        # Process only the annotation layer
+        if annotation_layer.data:
+            # Get edge colors for all shapes
+            edge_colors = annotation_layer.edge_color
             
-            # Handle shapes (rectangles, polygons, etc.)
-            if isinstance(layer, napari.layers.Shapes):
-                if layer.data:
-                    # Get edge colors for all shapes
-                    edge_colors = layer.edge_color
-                    
-                    # Handle different color formats
-                    if isinstance(edge_colors, np.ndarray):
-                        if edge_colors.ndim == 1:
-                            # Single color for all shapes, convert to 2D
-                            edge_colors = np.array([edge_colors])
-                        elif edge_colors.ndim == 2:
-                            # Already in correct format (n_shapes, n_colors)
-                            pass
-                    else:
-                        # Convert to array
-                        edge_colors = np.array([edge_colors])
-                    
-                    # Process each shape
-                    for shape_idx, shape in enumerate(layer.data):
-                        # Convert shape to bounding box
-                        # Shape is a numpy array of [x, y] coordinates
-                        if len(shape) == 0:
-                            continue
-                        
-                        # Determine class ID from this shape's color
-                        class_id = 0  # Default
-                        
-                        # Get the color for this specific shape
-                        if shape_idx < len(edge_colors):
-                            shape_color = edge_colors[shape_idx]
-                            # Extract RGB (first 3 values, ignore alpha if present)
-                            if len(shape_color) >= 3:
-                                color_tuple = tuple(shape_color[:3])
-                                detected_class = get_class_from_napari_color(color_tuple)
-                                if detected_class is not None:
-                                    class_id = detected_class
-                        
-                        # Get bounding box from shape vertices
-                        x_coords = shape[:, 0]
-                        y_coords = shape[:, 1]
-                        
-                        x_min = float(np.min(x_coords))
-                        x_max = float(np.max(x_coords))
-                        y_min = float(np.min(y_coords))
-                        y_max = float(np.max(y_coords))
-                        
-                        # Calculate center and dimensions
-                        center_x = (x_min + x_max) / 2.0
-                        center_y = (y_min + y_max) / 2.0
-                        width = x_max - x_min
-                        height = y_max - y_min
-                        
-                        # Normalize to 0-1 range
-                        center_x_norm = center_x / image_width
-                        center_y_norm = center_y / image_height
-                        width_norm = width / image_width
-                        height_norm = height / image_height
-                        
-                        # Clamp to [0, 1] range
-                        center_x_norm = max(0.0, min(1.0, center_x_norm))
-                        center_y_norm = max(0.0, min(1.0, center_y_norm))
-                        width_norm = max(0.0, min(1.0, width_norm))
-                        height_norm = max(0.0, min(1.0, height_norm))
-                        
-                        # YOLO format: class_id center_x center_y width height
-                        yolo_annotations.append(
-                            f"{class_id} {center_x_norm:.6f} {center_y_norm:.6f} {width_norm:.6f} {height_norm:.6f}\n"
-                        )
+            # Handle different color formats
+            if isinstance(edge_colors, np.ndarray):
+                if edge_colors.ndim == 1:
+                    # Single color for all shapes, convert to 2D
+                    edge_colors = np.array([edge_colors])
+                elif edge_colors.ndim == 2:
+                    # Already in correct format (n_shapes, n_colors)
+                    pass
+            else:
+                # Convert to array
+                edge_colors = np.array([edge_colors])
             
-            # Handle points (convert to small bounding boxes)
-            elif isinstance(layer, napari.layers.Points):
-                if hasattr(layer, 'data') and layer.data.size > 0:
-                    point_size = layer.size[0] if hasattr(layer.size, '__len__') else layer.size
-                    # Use point size to create bounding box, or default to 10 pixels
-                    box_size = float(point_size) if point_size > 0 else 10.0
-                    half_size = box_size / 2.0
-                    
-                    for point in layer.data:
-                        x, y = float(point[0]), float(point[1])
-                        
-                        # Create bounding box around point
-                        x_min = x - half_size
-                        x_max = x + half_size
-                        y_min = y - half_size
-                        y_max = y + half_size
-                        
-                        # Calculate center and dimensions
-                        center_x = (x_min + x_max) / 2.0
-                        center_y = (y_min + y_max) / 2.0
-                        width = x_max - x_min
-                        height = y_max - y_min
-                        
-                        # Normalize to 0-1 range
-                        center_x_norm = center_x / image_width
-                        center_y_norm = center_y / image_height
-                        width_norm = width / image_width
-                        height_norm = height / image_height
-                        
-                        # Clamp to [0, 1] range
-                        center_x_norm = max(0.0, min(1.0, center_x_norm))
-                        center_y_norm = max(0.0, min(1.0, center_y_norm))
-                        width_norm = max(0.0, min(1.0, width_norm))
-                        height_norm = max(0.0, min(1.0, height_norm))
-                        
-                        # YOLO format: class_id center_x center_y width height
-                        yolo_annotations.append(
-                            f"{class_id} {center_x_norm:.6f} {center_y_norm:.6f} {width_norm:.6f} {height_norm:.6f}\n"
-                        )
+            # Process each shape
+            for shape_idx, shape in enumerate(annotation_layer.data):
+                # Convert shape to bounding box
+                # Shape is a numpy array of [x, y] coordinates
+                if len(shape) == 0:
+                    continue
+                
+                # Determine class ID from this shape's color
+                class_id = 0  # Default
+                
+                # Get the color for this specific shape
+                if shape_idx < len(edge_colors):
+                    shape_color = edge_colors[shape_idx]
+                    # Extract RGB (first 3 values, ignore alpha if present)
+                    if len(shape_color) >= 3:
+                        color_tuple = tuple(shape_color[:3])
+                        detected_class = get_class_from_napari_color(color_tuple)
+                        if detected_class is not None:
+                            class_id = detected_class
+                
+                # Get bounding box from shape vertices
+                x_coords = shape[:, 0]
+                y_coords = shape[:, 1]
+                
+                x_min = float(np.min(x_coords))
+                x_max = float(np.max(x_coords))
+                y_min = float(np.min(y_coords))
+                y_max = float(np.max(y_coords))
+                
+                # Calculate center and dimensions
+                center_x = (x_min + x_max) / 2.0
+                center_y = (y_min + y_max) / 2.0
+                width = x_max - x_min
+                height = y_max - y_min
+                
+                # Normalize to 0-1 range
+                center_x_norm = center_x / image_width
+                center_y_norm = center_y / image_height
+                width_norm = width / image_width
+                height_norm = height / image_height
+                
+                # Clamp to [0, 1] range
+                center_x_norm = max(0.0, min(1.0, center_x_norm))
+                center_y_norm = max(0.0, min(1.0, center_y_norm))
+                width_norm = max(0.0, min(1.0, width_norm))
+                height_norm = max(0.0, min(1.0, height_norm))
+                
+                # YOLO format: class_id center_x center_y width height
+                yolo_annotations.append(
+                    f"{class_id} {center_x_norm:.6f} {center_y_norm:.6f} {width_norm:.6f} {height_norm:.6f}\n"
+                )
         
         # Save to YOLO format (.txt file)
         # Preserve subdirectory structure in annotations folder
@@ -401,6 +372,50 @@ class DataManagementWidget(QWidget):
             display_path = current_image.name
         show_info(f"Annotations saved in YOLO format for {display_path}")
 
+    def _save_current_nuclei_segmentation(self):
+        """Save current nuclei segmentation masks to file."""
+        if self.current_image_index < 0 or not self.image_files:
+            return
+        
+        current_image = self.image_files[self.current_image_index]
+        if not self.nuclei_segmentation_dir:
+            return
+
+        # Find the nuclei segmentation layer
+        nuclei_layer = None
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Shapes) and layer.name == NUCLEI_SEGMENTATION_LAYER_NAME:
+                nuclei_layer = layer
+                break
+        
+        if nuclei_layer is None or not hasattr(nuclei_layer, '_masks_data'):
+            # No nuclei segmentation to save
+            return
+        
+        masks = nuclei_layer._masks_data
+        
+        # Save masks as .npy file
+        # Preserve subdirectory structure in nuclei-segmentation folder
+        try:
+            relative_path = current_image.relative_to(self.dataset_path)
+            # Create segmentation path preserving subdirectory structure
+            segmentation_file = self.nuclei_segmentation_dir / relative_path.with_suffix('.npy')
+            # Create parent directories if they don't exist
+            segmentation_file.parent.mkdir(parents=True, exist_ok=True)
+        except ValueError:
+            # Fallback: if path is not relative, use just the stem
+            segmentation_file = self.nuclei_segmentation_dir / f"{current_image.stem}.npy"
+        
+        # Save masks as numpy array
+        np.save(segmentation_file, masks)
+        
+        # Show relative path in message
+        try:
+            display_path = str(current_image.relative_to(self.dataset_path))
+        except ValueError:
+            display_path = current_image.name
+        show_info(f"Nuclei segmentation saved for {display_path}")
+
     def _on_tree_item_clicked(self, item: QTreeWidgetItem, column: int):
         """Handle click on a tree item (folder or image)."""
         # Check if this item has data (meaning it's an image, not a folder)
@@ -410,9 +425,10 @@ class DataManagementWidget(QWidget):
             image_path_str, image_index = item_data
             image_path = Path(image_path_str)
             
-            # Save current annotations if we have a current image
+            # Save current annotations and nuclei segmentation if we have a current image
             if self.current_image_index >= 0 and self.current_image_index != image_index:
                 self._save_current_annotations()
+                self._save_current_nuclei_segmentation()
             
             self.current_image_index = image_index
             self._load_image(image_path)
@@ -526,7 +542,7 @@ class DataManagementWidget(QWidget):
                 
                 shapes_layer = self.viewer.add_shapes(
                     rectangles,
-                    name="annotations",
+                    name=ANNOTATION_LAYER_NAME,
                     edge_color=edge_color_array,
                     face_color="transparent",
                     shape_type="rectangle",
@@ -554,6 +570,96 @@ class DataManagementWidget(QWidget):
             except ValueError:
                 display_path = image_path.name
             error_msg = f"Error loading annotations for {display_path}: {str(e)}\n{traceback.format_exc()}"
+            show_warning(error_msg)
+            return False
+
+    def _load_nuclei_segmentation(self, image_path: Path):
+        """Load nuclei segmentation masks from .npy file if it exists."""
+        if not self.nuclei_segmentation_dir:
+            return False
+        
+        # Get segmentation file path preserving subdirectory structure
+        try:
+            relative_path = image_path.relative_to(self.dataset_path)
+            # Create segmentation path preserving subdirectory structure
+            segmentation_file = self.nuclei_segmentation_dir / relative_path.with_suffix('.npy')
+        except ValueError:
+            # Fallback: if path is not relative, use just the stem
+            segmentation_file = self.nuclei_segmentation_dir / f"{image_path.stem}.npy"
+        
+        if not segmentation_file.exists():
+            return False
+        
+        try:
+            # Load masks
+            masks = np.load(segmentation_file)
+            
+            # Convert masks to shapes (polygons)
+            shapes_data = []
+            unique_labels = np.unique(masks)
+            unique_labels = unique_labels[unique_labels > 0]  # Remove background (0)
+            
+            for label_id in unique_labels:
+                # Create binary mask for this instance
+                binary_mask = (masks == label_id).astype(np.uint8)
+                
+                # Find contours
+                contours = measure.find_contours(binary_mask, 0.5)
+                
+                if len(contours) > 0:
+                    # Use the largest contour (main shape)
+                    largest_contour = max(contours, key=len)
+                    # Convert to (N, 2) array: [[y1, x1], [y2, x2], ...]
+                    # Note: napari uses (row, col) which is (y, x)
+                    polygon = largest_contour
+                    shapes_data.append(polygon)
+            
+            if len(shapes_data) == 0:
+                return False
+            
+            # Generate colors for each instance
+            n_instances = len(shapes_data)
+            colors = []
+            for i in range(n_instances):
+                hue = (i * 137.508) % 360  # Golden angle for good distribution
+                # Convert HSV to RGB
+                rgb = colorsys.hsv_to_rgb(hue / 360.0, 0.7, 0.9)
+                # Add alpha (partial transparency)
+                rgba = [rgb[0], rgb[1], rgb[2], 0.5]  # 50% transparency
+                colors.append(rgba)
+            
+            color_array = np.array(colors)
+            
+            # Create shapes layer
+            shapes_layer = self.viewer.add_shapes(
+                shapes_data,
+                name=NUCLEI_SEGMENTATION_LAYER_NAME,
+                shape_type='polygon',
+                edge_color='white',
+                edge_width=1,
+                face_color=color_array,
+                opacity=0.5,
+            )
+            
+            # Store masks in layer metadata
+            shapes_layer._masks_data = masks
+            
+            # Get display path for messages
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except ValueError:
+                display_path = image_path.name
+            
+            show_info(f"Loaded nuclei segmentation for {display_path}")
+            return True
+            
+        except Exception as e:
+            import traceback
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except ValueError:
+                display_path = image_path.name
+            error_msg = f"Error loading nuclei segmentation for {display_path}: {str(e)}\n{traceback.format_exc()}"
             show_warning(error_msg)
             return False
 
@@ -589,7 +695,7 @@ class DataManagementWidget(QWidget):
                 # Create layer with empty data first, then set color
                 shapes_layer = self.viewer.add_shapes(
                     data=[],
-                    name="annotations",
+                    name=ANNOTATION_LAYER_NAME,
                     face_color="transparent",
                 )
                 # Set color after creation (as array format with RGBA)
@@ -597,6 +703,23 @@ class DataManagementWidget(QWidget):
                 shapes_layer.edge_color = np.array([[default_color[0], default_color[1], default_color[2], 1.0]])
                 # Set edge width to make it more visible
                 shapes_layer.edge_width = 2
+            
+            # Load nuclei segmentation if it exists
+            nuclei_segmentation_loaded = self._load_nuclei_segmentation(image_path)
+            
+            # If annotations were loaded, hide nuclei segmentation and show annotations
+            if annotations_loaded:
+                # Hide nuclei segmentation layer
+                for layer in self.viewer.layers:
+                    if isinstance(layer, napari.layers.Shapes) and layer.name == NUCLEI_SEGMENTATION_LAYER_NAME:
+                        layer.visible = False
+                        break
+                
+                # Ensure annotation layer is visible
+                for layer in self.viewer.layers:
+                    if isinstance(layer, napari.layers.Shapes) and layer.name == ANNOTATION_LAYER_NAME:
+                        layer.visible = True
+                        break
             
             # Get display path for message
             try:
@@ -619,9 +742,10 @@ class DataManagementWidget(QWidget):
             show_warning("No images in dataset.")
             return
 
-        # Save current annotations if we have a current image
+        # Save current annotations and nuclei segmentation if we have a current image
         if self.current_image_index >= 0:
             self._save_current_annotations()
+            self._save_current_nuclei_segmentation()
 
         # Find next unannotated image
         # Start from current + 1, or from beginning if no current image

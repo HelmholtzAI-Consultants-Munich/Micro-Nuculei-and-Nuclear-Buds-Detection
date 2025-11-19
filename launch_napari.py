@@ -2,9 +2,10 @@
 """
 Launch script for napari with Micro-Nuclei and Nuclear Buds Detection widgets.
 
-This script automatically launches napari and loads both widgets:
+This script automatically launches napari and loads all widgets:
 - Micro-Nuclei Detection widget
 - Data Management widget
+- Nuclei Segmentation widget
 
 Usage:
     python launch_napari.py
@@ -13,6 +14,7 @@ Usage:
 import napari
 from micro_nuculei_nuclear_buds_detection._widget import DetectionWidget
 from micro_nuculei_nuclear_buds_detection._data_management_widget import DataManagementWidget
+from micro_nuculei_nuclear_buds_detection._nuclei_segmentation_widget import NucleiSegmentationWidget
 
 
 def main():
@@ -47,7 +49,16 @@ def main():
             )
             print("✓ Data Management widget loaded")
             
-            print("\nNapari is ready! Both widgets are loaded in the dock.")
+            # Load Nuclei Segmentation widget
+            segmentation_widget = NucleiSegmentationWidget(viewer)
+            viewer.window.add_dock_widget(
+                segmentation_widget,
+                name="Nuclei Segmentation",
+                area="right"
+            )
+            print("✓ Nuclei Segmentation widget loaded")
+            
+            print("\nNapari is ready! All widgets are loaded in the dock.")
         except Exception as e:
             print(f"Error loading widgets: {e}")
             import traceback

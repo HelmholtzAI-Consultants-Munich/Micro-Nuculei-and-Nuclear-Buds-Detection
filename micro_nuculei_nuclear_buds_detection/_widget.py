@@ -9,7 +9,7 @@ from qtpy.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayou
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QColor
 
-from ._constants import CLASS_COLORS, CLASS_NAMES, get_napari_color
+from ._constants import CLASS_COLORS, CLASS_NAMES, get_napari_color, ANNOTATION_LAYER_NAME, NUCLEI_SEGMENTATION_LAYER_NAME
 
 
 class DetectionWidget(QWidget):
@@ -84,6 +84,55 @@ class DetectionWidget(QWidget):
         
         self.layout().addLayout(button_layout)
 
+        # Tool selection buttons
+        tool_label = QLabel("Tools:")
+        tool_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        self.layout().addWidget(tool_label)
+        
+        tool_layout = QHBoxLayout()
+        
+        # Select shapes button
+        self.select_button = QPushButton("Select Shapes")
+        self.select_button.setStyleSheet(
+            "QPushButton {"
+            "background-color: #2196F3;"
+            "color: white;"
+            "font-weight: bold;"
+            "border: 2px solid #333;"
+            "border-radius: 5px;"
+            "padding: 8px 15px;"
+            "min-height: 30px;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #1976D2;"
+            "border: 2px solid white;"
+            "}"
+        )
+        self.select_button.clicked.connect(self._on_select_shapes_clicked)
+        tool_layout.addWidget(self.select_button)
+        
+        # Move camera button
+        self.pan_button = QPushButton("Move Camera")
+        self.pan_button.setStyleSheet(
+            "QPushButton {"
+            "background-color: #9C27B0;"
+            "color: white;"
+            "font-weight: bold;"
+            "border: 2px solid #333;"
+            "border-radius: 5px;"
+            "padding: 8px 15px;"
+            "min-height: 30px;"
+            "}"
+            "QPushButton:hover {"
+            "background-color: #7B1FA2;"
+            "border: 2px solid white;"
+            "}"
+        )
+        self.pan_button.clicked.connect(self._on_move_camera_clicked)
+        tool_layout.addWidget(self.pan_button)
+        
+        self.layout().addLayout(tool_layout)
+
         # Detection button
         self.detect_button = QPushButton("Detect")
         self.detect_button.setStyleSheet(
@@ -110,13 +159,31 @@ class DetectionWidget(QWidget):
         """Get or create the annotations shapes layer."""
         # Find existing annotations layer
         for layer in self.viewer.layers:
-            if isinstance(layer, napari.layers.Shapes) and layer.name == "annotations":
+            if isinstance(layer, napari.layers.Shapes) and layer.name == ANNOTATION_LAYER_NAME:
                 return layer
         return None
+
+    def _hide_nuclei_segmentation_layer(self):
+        """Hide the nuclei segmentation layer if it exists."""
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Shapes) and layer.name == NUCLEI_SEGMENTATION_LAYER_NAME:
+                layer.visible = False
+                break
+
+    def _show_annotation_layer(self):
+        """Show the annotation layer if it exists."""
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Shapes) and layer.name == ANNOTATION_LAYER_NAME:
+                layer.visible = True
+                break
 
     def _on_class_selected(self, class_id: int):
         """Handle class selection - update drawing color and set rectangle tool."""
         self.current_class_id = class_id
+        
+        # Hide nuclei segmentation layer and show annotation layer
+        self._hide_nuclei_segmentation_layer()
+        self._show_annotation_layer()
         
         # Get the annotations layer
         shapes_layer = self._get_annotations_layer()
@@ -200,7 +267,7 @@ class DetectionWidget(QWidget):
     def _on_shape_data_changed(self, event):
         """Handle when shape data changes - set color for new shapes."""
         shapes_layer = event.source
-        if shapes_layer.name != "annotations":
+        if shapes_layer.name != ANNOTATION_LAYER_NAME:
             return
         
         n_shapes = len(shapes_layer.data)
@@ -256,11 +323,58 @@ class DetectionWidget(QWidget):
         # Update shape count
         self._shape_count_at_selection = n_shapes
 
+    def _on_select_shapes_clicked(self):
+        """Handle select shapes button click - switch to select mode."""
+        # Hide nuclei segmentation layer and show annotation layer
+        self._hide_nuclei_segmentation_layer()
+        self._show_annotation_layer()
+        
+        shapes_layer = self._get_annotations_layer()
+        if shapes_layer is None:
+            show_warning("No annotations layer found. Please load an image first.")
+            return
+        
+        # Set the shapes layer as active
+        self.viewer.layers.selection.active = shapes_layer
+        
+        # Set to select mode
+        try:
+            shapes_layer.mode = 'select'
+            show_info("Select mode: Click shapes to select, Delete key to remove")
+        except Exception as e:
+            show_warning(f"Could not switch to select mode: {str(e)}")
+
+    def _on_move_camera_clicked(self):
+        """Handle move camera button click - switch to pan_zoom mode."""
+        # Hide nuclei segmentation layer and show annotation layer
+        self._hide_nuclei_segmentation_layer()
+        self._show_annotation_layer()
+        
+        shapes_layer = self._get_annotations_layer()
+        if shapes_layer is None:
+            show_warning("No annotations layer found. Please load an image first.")
+            return
+        
+        # Set the shapes layer as active
+        self.viewer.layers.selection.active = shapes_layer
+        
+        # Set to pan_zoom mode
+        try:
+            shapes_layer.mode = 'pan_zoom'
+            show_info("Pan/Zoom mode: Click and drag to move, scroll to zoom")
+        except Exception as e:
+            show_warning(f"Could not switch to pan/zoom mode: {str(e)}")
+
     def _on_detect_clicked(self):
         """Handle detect button click."""
+        # Hide nuclei segmentation layer and show annotation layer
+        self._hide_nuclei_segmentation_layer()
+        self._show_annotation_layer()
+        
         if len(self.viewer.layers) == 0:
             show_info("Please load an image first.")
             return
 
         # TODO: Implement detection logic
         show_info("Detection functionality to be implemented.")
+

@@ -11,12 +11,18 @@ contributions:
     - id: micro-nuculei-nuclear-buds-detection.data_management
       title: Data Management
       python_name: micro_nuculei_nuclear_buds_detection._data_management_widget:DataManagementWidget
+    - id: micro-nuculei-nuclear-buds-detection.nuclei_segmentation
+      title: Nuclei Segmentation
+      python_name: micro_nuculei_nuclear_buds_detection._nuclei_segmentation_widget:NucleiSegmentationWidget
   widgets:
     - command: micro-nuculei-nuclear-buds-detection.detect
       display_name: Micro-Nuclei Detection
       autogenerate: true
     - command: micro-nuculei-nuclear-buds-detection.data_management
       display_name: Data Management
+      autogenerate: true
+    - command: micro-nuculei-nuclear-buds-detection.nuclei_segmentation
+      display_name: Nuclei Segmentation
       autogenerate: true
 npe2: "0.1.0"
 

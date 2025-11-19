@@ -23,6 +23,12 @@ CLASS_IDS: Dict[int, int] = {
     1: 1,  # nuclear-buds
 }
 
+# Annotation layer name (unique identifier for bounding box annotations)
+ANNOTATION_LAYER_NAME = "bounding_box_annotations"
+
+# Nuclei segmentation layer name (unique identifier for nuclei segmentation)
+NUCLEI_SEGMENTATION_LAYER_NAME = "nuclei_segmentation"
+
 # Reverse mapping: RGB color tuple to class ID
 # This helps identify which class a color belongs to
 COLOR_TO_CLASS: Dict[Tuple[int, int, int], int] = {
