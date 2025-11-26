@@ -13,21 +13,30 @@ CLASS_COLORS: Dict[int, Tuple[int, int, int]] = {
 
 # Class names mapping
 CLASS_NAMES: Dict[int, str] = {
-    0: "micro-nuclei",
-    1: "nuclear-buds",
+    0: "micro_nuclei",
+    1: "nuclear_buds",
 }
 
 # Class IDs (for YOLO format)
-CLASS_IDS: Dict[int, int] = {
-    0: 0,  # micro-nuclei
-    1: 1,  # nuclear-buds
+CLASS_IDS: Dict[str, int] = {
+    "micro_nuclei": 0,  # micro-nuclei
+    "nuclear_buds": 1,  # nuclear-buds
 }
+
+# Subfolders
+ANNOTATIONS_SUBFOLDER = "annotations"
+NUCLEI_SEGMENTATION_SUBFOLDER = "nuclei_segmentation"
+POSTPROCESSING_SUBFOLDER = "postprocessing"
 
 # Annotation layer name (unique identifier for bounding box annotations)
 ANNOTATION_LAYER_NAME = "bounding_box_annotations"
 
 # Nuclei segmentation layer name (unique identifier for nuclei segmentation)
 NUCLEI_SEGMENTATION_LAYER_NAME = "nuclei_segmentation"
+
+# Nuclei segmentation parameters path (for saving and loading parameters)
+NUCLEI_SEGMENTATION_PARAMS_PATH = "nuclei_segmentation_params.json"
+NUCLEI_SEGMENTATION_PARAMS_DEFAULT = {"min_size": 150}
 
 # Reverse mapping: RGB color tuple to class ID
 # This helps identify which class a color belongs to

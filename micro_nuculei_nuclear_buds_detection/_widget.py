@@ -59,7 +59,7 @@ class DetectionWidget(QWidget):
                 f"border: 2px solid #333;"
                 f"border-radius: 5px;"
                 f"padding: 8px 15px;"
-                f"min-height: 30px;"
+                f"min-height: 20px;"
                 f"}}"
                 f"QPushButton:hover {{"
                 f"border: 2px solid white;"
@@ -95,16 +95,17 @@ class DetectionWidget(QWidget):
         self.select_button = QPushButton("Select Shapes")
         self.select_button.setStyleSheet(
             "QPushButton {"
-            "background-color: #2196F3;"
+            # "background-color: #7B1FA2;"
             "color: white;"
             "font-weight: bold;"
             "border: 2px solid #333;"
             "border-radius: 5px;"
             "padding: 8px 15px;"
-            "min-height: 30px;"
+            "min-height: 20px;"
+            "min-width: 120px;"
             "}"
             "QPushButton:hover {"
-            "background-color: #1976D2;"
+            # "background-color: #6A1B9A;"
             "border: 2px solid white;"
             "}"
         )
@@ -115,16 +116,17 @@ class DetectionWidget(QWidget):
         self.pan_button = QPushButton("Move Camera")
         self.pan_button.setStyleSheet(
             "QPushButton {"
-            "background-color: #9C27B0;"
+            # "background-color: #E91E63;"
             "color: white;"
             "font-weight: bold;"
             "border: 2px solid #333;"
             "border-radius: 5px;"
             "padding: 8px 15px;"
-            "min-height: 30px;"
+            "min-height: 20px;"
+            "min-width: 120px;"
             "}"
             "QPushButton:hover {"
-            "background-color: #7B1FA2;"
+            # "background-color: #C2185B;"
             "border: 2px solid white;"
             "}"
         )
@@ -134,23 +136,32 @@ class DetectionWidget(QWidget):
         self.layout().addLayout(tool_layout)
 
         # Detection button
+        detect_layout = QHBoxLayout()
+        detect_layout.addStretch()  # Add stretch before button to center it
+        
         self.detect_button = QPushButton("Detect")
         self.detect_button.setStyleSheet(
             "QPushButton {"
             "background-color: #4CAF50;"
             "color: white;"
             "font-weight: bold;"
-            "border: none;"
+            "border: 2px solid #333;"
             "border-radius: 5px;"
-            "padding: 10px;"
+            "padding: 8px 15px;"
+            "min-height: 20px;"
+            "min-width: 120px;"
             "margin-top: 15px;"
             "}"
             "QPushButton:hover {"
             "background-color: #45a049;"
+            "border: 2px solid white;"
             "}"
         )
         self.detect_button.clicked.connect(self._on_detect_clicked)
-        self.layout().addWidget(self.detect_button)
+        detect_layout.addWidget(self.detect_button)
+        
+        detect_layout.addStretch()  # Add stretch after button to center it
+        self.layout().addLayout(detect_layout)
 
         # Add stretch to push everything to top
         self.layout().addStretch()
