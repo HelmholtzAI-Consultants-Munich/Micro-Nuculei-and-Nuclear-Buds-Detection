@@ -40,7 +40,7 @@ def postprocess_detections(dataset_path: Path, image_path: Path, annotation_file
     # assign the detections to the nuclei
     micro_nuclei_detections = detections[detections[:, 0] == CLASS_IDS["micro_nuclei"]]
     if micro_nuclei_detections.size > 0:
-        _, micro_nuclei_idx = kd_tree.query(micro_nuclei_detections[:, [1, 2]])
+        _, micro_nuclei_idx = kd_tree.query(micro_nuclei_detections[:, [2, 1]])
         # Handle both scalar and array returns from kd_tree.query
         if np.isscalar(micro_nuclei_idx):
             micro_nuclei_labels = [labs[micro_nuclei_idx].item()]

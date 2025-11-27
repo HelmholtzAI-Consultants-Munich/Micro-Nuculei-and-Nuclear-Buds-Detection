@@ -114,16 +114,20 @@ class TestPostprocessDetections:
         postprocessing_dir.mkdir(parents=True, exist_ok=True)
         
         # Create temporary annotation file in YOLO format
-        # Format: class_id center_y center_x height width (normalized)
+        # Format: class_id center_x center_y width height (normalized)
+        # Note: After denormalization in 50x50 image:
+        # - Detection 1: (0.3, 0.3) -> (15, 15) - should be assigned to nucleus 1 (center ~15,15)
+        # - Detection 2: (0.6, 0.6) -> (30, 30) - should be assigned to nucleus 2 (center ~30,30)
+        # - Detection 3: (0.7, 0.2) -> (35, 10) - should be assigned to nucleus 3 (center ~10,35)
         annotation_file = temp_dir / "annotations" / "images_1" / "test_image.txt"
         annotation_file.parent.mkdir(parents=True, exist_ok=True)
         with open(annotation_file, 'w') as f:
             # Write normalized detections (will be denormalized in function)
             class_id_mn = CLASS_IDS["micro_nuclei"]
             class_id_nb = CLASS_IDS["nuclear_buds"]
-            f.write(f"{class_id_mn} 0.3 0.3 0.1 0.1\n")  # micro-nuclei
-            f.write(f"{class_id_nb} 0.6 0.6 0.1 0.1\n")  # nuclear-bud
-            f.write(f"{class_id_mn} 0.7 0.2 0.1 0.1\n")  # micro-nuclei
+            f.write(f"{class_id_mn} 0.3 0.3 0.1 0.1\n")  # micro-nuclei at (15, 15) -> nucleus 1
+            f.write(f"{class_id_nb} 0.6 0.6 0.1 0.1\n")  # nuclear-bud at (30, 30) -> nucleus 2
+            f.write(f"{class_id_mn} 0.7 0.2 0.1 0.1\n")  # micro-nuclei at (35, 10) -> nucleus 3
         
         # Create temporary nuclei segmentation file
         nuclei_segmentation_file = temp_dir / "nuclei_segmentation" / "images_1" / "test_image.npy"
@@ -158,6 +162,35 @@ class TestPostprocessDetections:
         unique_labels = np.unique(synthetic_mask_2d)
         unique_labels = unique_labels[unique_labels > 0]  # Exclude background
         assert len(df) == len(unique_labels)
+        
+        # Verify that detections are assigned to the correct nuclei
+        # Based on synthetic_mask_2d:
+        # - Nucleus 1: mask[10:20, 10:20] - center ~(15, 15)
+        # - Nucleus 2: mask[25:35, 25:35] - center ~(30, 30)
+        # - Nucleus 3: mask[5:15, 30:40] - center ~(10, 35)
+        # Detections:
+        # - Detection 1: micro-nuclei at (15, 15) normalized -> should be assigned to nucleus 1
+        # - Detection 2: nuclear-bud at (30, 30) normalized -> should be assigned to nucleus 2
+        # - Detection 3: micro-nuclei at (35, 10) normalized -> should be assigned to nucleus 3
+        
+        # Set nucleus_id as index for easier lookup
+        df_indexed = df.set_index('nucleus_id')
+        
+        # Check nucleus 1: should have 1 micro-nuclei, 0 nuclear buds
+        assert df_indexed.loc[1, 'micro_nuclei'] == 1, f"Nucleus 1 should have 1 micro-nuclei, got {df_indexed.loc[1, 'micro_nuclei']}"
+        assert df_indexed.loc[1, 'nuclear_buds'] == 0, f"Nucleus 1 should have 0 nuclear buds, got {df_indexed.loc[1, 'nuclear_buds']}"
+        
+        # Check nucleus 2: should have 0 micro-nuclei, 1 nuclear bud
+        assert df_indexed.loc[2, 'micro_nuclei'] == 0, f"Nucleus 2 should have 0 micro-nuclei, got {df_indexed.loc[2, 'micro_nuclei']}"
+        assert df_indexed.loc[2, 'nuclear_buds'] == 1, f"Nucleus 2 should have 1 nuclear bud, got {df_indexed.loc[2, 'nuclear_buds']}"
+        
+        # Check nucleus 3: should have 1 micro-nuclei, 0 nuclear buds
+        assert df_indexed.loc[3, 'micro_nuclei'] == 1, f"Nucleus 3 should have 1 micro-nuclei, got {df_indexed.loc[3, 'micro_nuclei']}"
+        assert df_indexed.loc[3, 'nuclear_buds'] == 0, f"Nucleus 3 should have 0 nuclear buds, got {df_indexed.loc[3, 'nuclear_buds']}"
+        
+        # Verify total counts
+        assert df['micro_nuclei'].sum() == 2, f"Total micro-nuclei should be 2, got {df['micro_nuclei'].sum()}"
+        assert df['nuclear_buds'].sum() == 1, f"Total nuclear buds should be 1, got {df['nuclear_buds'].sum()}"
         
         # Check that summary statistics file was created
         summary_file = dataset_path / POSTPROCESSING_SUBFOLDER / "summary_statistics.csv"
