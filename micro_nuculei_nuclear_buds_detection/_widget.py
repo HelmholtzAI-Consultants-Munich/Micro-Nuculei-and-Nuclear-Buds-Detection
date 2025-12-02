@@ -3,13 +3,15 @@ Main widget for the Micro-Nuculei and Nuclear Buds Detection plugin.
 """
 
 import numpy as np
+from pathlib import Path
+from typing import Optional
 import napari
 from napari.utils.notifications import show_info, show_warning
 from qtpy.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout
 from qtpy.QtCore import Qt
 from qtpy.QtGui import QColor
 
-from ._constants import CLASS_COLORS, CLASS_NAMES, get_napari_color, ANNOTATION_LAYER_NAME, NUCLEI_SEGMENTATION_LAYER_NAME
+from ._constants import CLASS_COLORS, CLASS_NAMES, get_napari_color, get_class_from_napari_color, ANNOTATION_LAYER_NAME, NUCLEI_SEGMENTATION_LAYER_NAME
 
 
 class DetectionWidget(QWidget):
@@ -22,6 +24,10 @@ class DetectionWidget(QWidget):
         
         # Track shape count to detect new shapes
         self._shape_count_at_selection = 0
+        
+        # Store paths for saving/loading (set by data management widget)
+        self.annotation_dir = None
+        self.dataset_path = None
 
         # Create layout
         self.setLayout(QVBoxLayout())
@@ -32,10 +38,10 @@ class DetectionWidget(QWidget):
         title.setStyleSheet("font-weight: bold; font-size: 14px; margin: 10px;")
         self.layout().addWidget(title)
 
-        # Annotation class selection
-        class_label = QLabel("Select Annotation Class:")
-        class_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        self.layout().addWidget(class_label)
+        # # Annotation class selection
+        # class_label = QLabel("Select Annotation Class:")
+        # class_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        # self.layout().addWidget(class_label)
         
         # Create class selection buttons
         button_layout = QHBoxLayout()
@@ -84,10 +90,10 @@ class DetectionWidget(QWidget):
         
         self.layout().addLayout(button_layout)
 
-        # Tool selection buttons
-        tool_label = QLabel("Tools:")
-        tool_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
-        self.layout().addWidget(tool_label)
+        # # Tool selection buttons
+        # tool_label = QLabel("Tools:")
+        # tool_label.setStyleSheet("font-weight: bold; margin-top: 15px;")
+        # self.layout().addWidget(tool_label)
         
         tool_layout = QHBoxLayout()
         
@@ -388,4 +394,295 @@ class DetectionWidget(QWidget):
 
         # TODO: Implement detection logic
         show_info("Detection functionality to be implemented.")
+    
+    def has_annotations(self, image_path: Path) -> bool:
+        """Check if annotations exist for an image.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            bool: True if annotation file exists
+        """
+        if not self.annotation_dir:
+            return False
+        
+        try:
+            relative_path = image_path.relative_to(self.dataset_path)
+            annotation_file = self.annotation_dir / relative_path.with_suffix('.txt')
+        except (ValueError, AttributeError):
+            annotation_file = self.annotation_dir / f"{image_path.stem}.txt"
+        
+        return annotation_file.exists()
+    
+    def save_annotations(self, image_path: Path) -> Optional[Path]:
+        """Save current annotations to file in YOLO format.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            Path to saved annotation file or None if error
+        """
+        if not self.annotation_dir:
+            return None
+        
+        # Get image dimensions from the first image layer
+        image_width = None
+        image_height = None
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Image):
+                if layer.data.ndim >= 2:
+                    if layer.data.ndim == 2:
+                        image_height, image_width = layer.data.shape
+                    elif layer.data.ndim == 3:
+                        image_height, image_width = layer.data.shape[-2:]
+                    break
+        
+        if image_width is None or image_height is None:
+            show_warning("Could not determine image dimensions. Annotations not saved.")
+            return None
+        
+        # Collect all annotations in YOLO format
+        yolo_annotations = []
+        
+        # Only process the annotation layer with the unique name
+        annotation_layer = None
+        for layer in self.viewer.layers:
+            if isinstance(layer, napari.layers.Shapes) and layer.name == ANNOTATION_LAYER_NAME:
+                annotation_layer = layer
+                break
+        
+        if annotation_layer is None:
+            show_warning(f"No annotation layer '{ANNOTATION_LAYER_NAME}' found. Nothing to save.")
+            return None
+        
+        # Process only the annotation layer
+        if annotation_layer.data:
+            # Get edge colors for all shapes
+            edge_colors = annotation_layer.edge_color
+            
+            # Handle different color formats
+            if isinstance(edge_colors, np.ndarray):
+                if edge_colors.ndim == 1:
+                    edge_colors = np.array([edge_colors])
+                elif edge_colors.ndim == 2:
+                    pass
+            else:
+                edge_colors = np.array([edge_colors])
+            
+            # Process each shape
+            for shape_idx, shape in enumerate(annotation_layer.data):
+                if len(shape) == 0:
+                    continue
+                
+                # Determine class ID from this shape's color
+                class_id = 0  # Default
+                
+                if shape_idx < len(edge_colors):
+                    shape_color = edge_colors[shape_idx]
+                    if len(shape_color) >= 3:
+                        color_tuple = tuple(shape_color[:3])
+                        detected_class = get_class_from_napari_color(color_tuple)
+                        if detected_class is not None:
+                            class_id = detected_class
+                
+                # Get bounding box from shape vertices, napari swaps x and y coordinates
+                x_coords = shape[:, 1]
+                y_coords = shape[:, 0]
+                
+                x_min = float(np.min(x_coords))
+                x_max = float(np.max(x_coords))
+                y_min = float(np.min(y_coords))
+                y_max = float(np.max(y_coords))
+                
+                # Calculate center and dimensions
+                center_x = (x_min + x_max) / 2.0
+                center_y = (y_min + y_max) / 2.0
+                width = x_max - x_min
+                height = y_max - y_min
+                
+                # Normalize to 0-1 range
+                center_x_norm = center_x / image_width
+                center_y_norm = center_y / image_height
+                width_norm = width / image_width
+                height_norm = height / image_height
+                
+                # Clamp to [0, 1] range
+                center_x_norm = max(0.0, min(1.0, center_x_norm))
+                center_y_norm = max(0.0, min(1.0, center_y_norm))
+                width_norm = max(0.0, min(1.0, width_norm))
+                height_norm = max(0.0, min(1.0, height_norm))
+                
+                # YOLO format: class_id center_x center_y width height
+                yolo_annotations.append(
+                    f"{class_id} {center_x_norm:.6f} {center_y_norm:.6f} {width_norm:.6f} {height_norm:.6f}\n"
+                )
+        
+        # Save to YOLO format (.txt file)
+        try:
+            relative_path = image_path.relative_to(self.dataset_path)
+            annotation_file = self.annotation_dir / relative_path.with_suffix('.txt')
+            annotation_file.parent.mkdir(parents=True, exist_ok=True)
+        except (ValueError, AttributeError):
+            annotation_file = self.annotation_dir / f"{image_path.stem}.txt"
+        
+        with open(annotation_file, 'w') as f:
+            f.writelines(yolo_annotations)
+        
+        # Show relative path in message
+        try:
+            display_path = str(image_path.relative_to(self.dataset_path))
+        except (ValueError, AttributeError):
+            display_path = image_path.name
+        
+        show_info(f"Annotations saved in YOLO format for {display_path}")
+        return annotation_file
+    
+    def load_annotations(self, image_path: Path) -> bool:
+        """Load annotations from YOLO format (.txt) file if it exists.
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            bool: True if annotations were loaded successfully
+        """
+        if not self.annotation_dir:
+            return False
+        
+        # Get annotation file path preserving subdirectory structure
+        try:
+            relative_path = image_path.relative_to(self.dataset_path)
+            annotation_file = self.annotation_dir / relative_path.with_suffix('.txt')
+        except (ValueError, AttributeError):
+            annotation_file = self.annotation_dir / f"{image_path.stem}.txt"
+        
+        if not annotation_file.exists():
+            return False
+        
+        try:
+            # Get image dimensions from the first image layer
+            image_width = None
+            image_height = None
+            for layer in self.viewer.layers:
+                if isinstance(layer, napari.layers.Image):
+                    if layer.data.ndim >= 2:
+                        if layer.data.ndim == 2:
+                            image_height, image_width = layer.data.shape
+                        elif layer.data.ndim == 3:
+                            image_height, image_width = layer.data.shape[-2:]
+                    break
+            
+            if image_width is None or image_height is None:
+                show_warning("Could not determine image dimensions. Annotations not loaded.")
+                return False
+            
+            # Collect all rectangles and their class IDs
+            rectangles = []
+            class_ids = []
+            
+            with open(annotation_file, 'r') as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    
+                    parts = line.split()
+                    if len(parts) != 5:
+                        continue
+                    
+                    try:
+                        # YOLO format: class_id center_x center_y width height
+                        class_id = int(parts[0])
+                        center_x_norm = float(parts[1])
+                        center_y_norm = float(parts[2])
+                        width_norm = float(parts[3])
+                        height_norm = float(parts[4])
+                        
+                        # Convert normalized coordinates back to pixel coordinates
+                        center_x = center_x_norm * image_width
+                        center_y = center_y_norm * image_height
+                        width = width_norm * image_width
+                        height = height_norm * image_height
+                        
+                        # Calculate bounding box corners
+                        x_min = center_x - width / 2.0
+                        x_max = center_x + width / 2.0
+                        y_min = center_y - height / 2.0
+                        y_max = center_y + height / 2.0
+                        
+                        # Create rectangle shape (4 corners)
+                        # Note: napari uses (row, col) which is (y, x)
+                        rectangle = np.array([
+                            [y_min, x_min],
+                            [y_max, x_min],
+                            [y_max, x_max],
+                            [y_min, x_max]
+                        ])
+                        
+                        rectangles.append(rectangle)
+                        class_ids.append(class_id)
+                        
+                    except (ValueError, IndexError) as e:
+                        show_warning(f"Error parsing annotation line: {line} - {str(e)}")
+                        continue
+            
+            annotations_loaded = False
+            
+            # Create a single "annotations" layer with all rectangles
+            if rectangles:
+                # Create color array - one color per rectangle based on its class
+                edge_colors = []
+                for class_id in class_ids:
+                    edge_color = get_napari_color(class_id)
+                    edge_colors.append([edge_color[0], edge_color[1], edge_color[2], 1.0])
+                
+                edge_color_array = np.array(edge_colors)
+                
+                shapes_layer = self.viewer.add_shapes(
+                    rectangles,
+                    name=ANNOTATION_LAYER_NAME,
+                    edge_color=edge_color_array,
+                    face_color="transparent",
+                    shape_type="rectangle",
+                )
+                shapes_layer.edge_width = 2
+                annotations_loaded = True
+            
+            # Get display path for messages
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except (ValueError, AttributeError):
+                display_path = image_path.name
+            
+            if annotations_loaded:
+                show_info(f"Loaded annotations for {display_path}")
+            else:
+                show_warning(f"No valid annotations found in file for {display_path}")
+            
+            return annotations_loaded
+            
+        except Exception as e:
+            import traceback
+            try:
+                display_path = str(image_path.relative_to(self.dataset_path))
+            except (ValueError, AttributeError):
+                display_path = image_path.name
+            error_msg = f"Error loading annotations for {display_path}: {str(e)}\n{traceback.format_exc()}"
+            show_warning(error_msg)
+            return False
+    
+    def create_empty_annotation_layer(self):
+        """Create an empty shapes layer for annotations."""
+        default_class_id = 0
+        default_color = get_napari_color(default_class_id)
+        shapes_layer = self.viewer.add_shapes(
+            data=[],
+            name=ANNOTATION_LAYER_NAME,
+            face_color="transparent",
+        )
+        shapes_layer.edge_color = np.array([[default_color[0], default_color[1], default_color[2], 1.0]])
+        shapes_layer.edge_width = 2
+        return shapes_layer
 
