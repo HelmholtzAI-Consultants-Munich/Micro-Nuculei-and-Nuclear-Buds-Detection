@@ -107,7 +107,7 @@ class DataManagementWidget(QWidget):
         buttons_layout = QHBoxLayout()
         
         # Next Unannotated button
-        self.next_unannotated_button = QPushButton("Next Unannotated Image")
+        self.next_unannotated_button = QPushButton("Next Image")
         self.next_unannotated_button.setStyleSheet(
             "QPushButton {"
             # "background-color: #00BCD4;"
