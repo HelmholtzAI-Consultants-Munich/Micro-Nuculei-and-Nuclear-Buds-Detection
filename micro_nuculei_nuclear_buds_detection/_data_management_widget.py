@@ -431,6 +431,10 @@ class DataManagementWidget(QWidget):
             for layer in layers_to_remove:
                 self.viewer.layers.remove(layer)
             
+            # Reset widget references to layers (they point to removed layers now)
+            if hasattr(self, 'segmentation_widget') and self.segmentation_widget:
+                self.segmentation_widget.nuclei_layer = None
+            
             # Load new image
             image_data = io.imread(str(image_path))
             

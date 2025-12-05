@@ -700,6 +700,9 @@ class NucleiSegmentationWidget(QWidget):
         if not self.has_segmentation(image_path):
             return False
         
+        # Reset nuclei_layer reference in case it points to a removed layer
+        self.nuclei_layer = None
+        
         # Get segmentation file path preserving subdirectory structure
         try:
             relative_path = image_path.relative_to(self.dataset_path)
@@ -720,6 +723,11 @@ class NucleiSegmentationWidget(QWidget):
             # Generate colors for each instance
             n_instances = len(shapes_data)
             colors = self._generate_colors(n_instances)
+            
+            # Remove any existing nuclei segmentation layer (shouldn't exist after clearing, but be safe)
+            for layer in list(self.viewer.layers):
+                if isinstance(layer, napari.layers.Shapes) and layer.name == NUCLEI_SEGMENTATION_LAYER_NAME:
+                    self.viewer.layers.remove(layer)
             
             # Create shapes layer
             shapes_layer = self.viewer.add_shapes(
