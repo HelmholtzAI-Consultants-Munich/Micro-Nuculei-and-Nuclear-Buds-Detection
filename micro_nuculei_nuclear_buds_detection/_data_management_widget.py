@@ -4,6 +4,7 @@ Data management widget for the Micro-Nuculei and Nuclear Buds Detection plugin.
 
 from pathlib import Path
 from typing import List, Optional
+import os
 
 import numpy as np
 import json
@@ -222,6 +223,33 @@ class DataManagementWidget(QWidget):
             # Use rglob to search recursively
             self.image_files.extend(self.dataset_path.rglob(f"*{ext}"))
         self.image_files = [Path(image_file) for image_file in self.image_files]
+        
+        # Deduplicate: On Windows, case-insensitive filesystem might cause duplicates
+        # Use resolved paths to handle symlinks and normalize case
+        seen = set()
+        unique_files = []
+        for image_file in self.image_files:
+            try:
+                # Resolve to handle symlinks and normalize path
+                resolved = image_file.resolve()
+                # On Windows, use case-normalized path for comparison
+                if hasattr(resolved, 'as_posix'):
+                    # Use normalized path string for comparison (case-insensitive on Windows)
+                    normalized = str(resolved).lower() if os.name == 'nt' else str(resolved)
+                else:
+                    normalized = str(resolved).lower() if os.name == 'nt' else str(resolved)
+                
+                if normalized not in seen:
+                    seen.add(normalized)
+                    unique_files.append(image_file)
+            except (OSError, ValueError):
+                # If resolve fails (e.g., broken symlink), use original path
+                normalized = str(image_file).lower() if os.name == 'nt' else str(image_file)
+                if normalized not in seen:
+                    seen.add(normalized)
+                    unique_files.append(image_file)
+        
+        self.image_files = unique_files
         
         # Sort for consistent ordering (by full path)
         self.image_files.sort()
