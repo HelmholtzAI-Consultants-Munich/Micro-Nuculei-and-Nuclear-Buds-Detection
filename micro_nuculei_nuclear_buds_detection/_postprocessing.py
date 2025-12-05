@@ -67,17 +67,17 @@ def postprocess_detections(dataset_path: Path, image_path: Path, annotation_file
         micro_nuclei_count = micro_nuclei_labels.count(lab)
         nuclear_buds_count = nuclear_buds_labels.count(lab)
         postprocessed_detections.loc[lab] = [lab, micro_nuclei_count, nuclear_buds_count]
-    # write postprocessed detections to a csv file
+    # write postprocessed detections to a tsv file
     try:
         relative_path = image_path.relative_to(dataset_path)
         # Create annotation path preserving subdirectory structure
-        postprocessing_file = dataset_path / POSTPROCESSING_SUBFOLDER / relative_path.with_suffix('.csv')
+        postprocessing_file = dataset_path / POSTPROCESSING_SUBFOLDER / relative_path.with_suffix('.tsv')
         # Create parent directories if they don't exist
         postprocessing_file.parent.mkdir(parents=True, exist_ok=True)
     except ValueError:
         # Fallback: if path is not relative, use just the stem
-        postprocessing_file = dataset_path / POSTPROCESSING_SUBFOLDER / f"{image_path.stem}.csv"
-    postprocessed_detections.to_csv(postprocessing_file, index=False)
+        postprocessing_file = dataset_path / POSTPROCESSING_SUBFOLDER / f"{image_path.stem}.tsv"
+    postprocessed_detections.to_csv(postprocessing_file, index=False, sep='\t')
 
     # write summary statistics to a json file
     write_summary_statistics(dataset_path, image_path, postprocessed_detections)
@@ -109,12 +109,12 @@ def find_contour_points(L):
 
 def write_summary_statistics(dataset_path: Path, image_path: Path, postprocessed_detections: pd.DataFrame):
     """
-    Write the summary statistics to a csv file.
+    Write the summary statistics to a tsv file.
     """
-    postprocessing_file = dataset_path / POSTPROCESSING_SUBFOLDER / "summary_statistics.csv"
+    postprocessing_file = dataset_path / POSTPROCESSING_SUBFOLDER / "summary_statistics.tsv"
     postprocessing_file.parent.mkdir(parents=True, exist_ok=True)
     if postprocessing_file.exists():
-        df = pd.read_csv(postprocessing_file)
+        df = pd.read_csv(postprocessing_file, sep='\t')
     else:
         df = pd.DataFrame(columns=[
             "image_id",
@@ -151,5 +151,5 @@ def write_summary_statistics(dataset_path: Path, image_path: Path, postprocessed
         "4+_nuclear_buds": postprocessed_detections[postprocessed_detections["nuclear_buds"] >= 4].shape[0]/postprocessed_detections["nucleus_id"].nunique(),
     }
 
-    df.to_csv(postprocessing_file, index=False)
+    df.to_csv(postprocessing_file, index=False, sep='\t')
 
