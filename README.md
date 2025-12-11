@@ -28,7 +28,7 @@ Run the following commands in the terminall (or in Anaconda prompt for Windows).
 1. Clone the repository:
 
 ```bash
-git clone https://github.com/your-username/Micro-Nuculei-and-Nuclear-Buds-Detection.git
+git clone https://github.com/HelmholtzAI-Consultants-Munich/Micro-Nuculei-and-Nuclear-Buds-Detection.git
 cd Micro-Nuculei-and-Nuclear-Buds-Detection
 ```
 
