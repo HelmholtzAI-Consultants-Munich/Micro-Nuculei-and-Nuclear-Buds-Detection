@@ -12,13 +12,16 @@ from typing import Optional
 from cellpose import models, core, utils
 import napari
 from napari.utils.notifications import show_info, show_warning
-from qtpy.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QSpinBox, QDoubleSpinBox, QHBoxLayout
+from qtpy.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QSpinBox, QDoubleSpinBox, QHBoxLayout, QComboBox
 from qtpy.QtCore import Qt
 from skimage import measure
 from ._constants import NUCLEI_SEGMENTATION_LAYER_NAME, ANNOTATION_LAYER_NAME
 
 class NucleiSegmentationWidget(QWidget):
     """Widget for nuclei segmentation."""
+    
+    # Available Cellpose model types
+    AVAILABLE_MODELS = ['nuclei', 'cyto3']
 
     def __init__(self, napari_viewer, nuclei_segmentation_params_path = None):
         super().__init__()
@@ -37,17 +40,29 @@ class NucleiSegmentationWidget(QWidget):
                 self.cellprob_threshold = nuclei_segmentation_params['cellprob_threshold']
             else:
                 self.cellprob_threshold = 0.0
+            if 'flow_threshold' in nuclei_segmentation_params:
+                self.flow_threshold = nuclei_segmentation_params['flow_threshold']
+            else:
+                self.flow_threshold = 0.4
             if 'diameter' in nuclei_segmentation_params:
                 self.diameter = nuclei_segmentation_params['diameter']
                 if self.diameter == 0:
                     self.diameter = None
             else:
                 self.diameter = None
+            if 'model_type' in nuclei_segmentation_params:
+                self.model_type = nuclei_segmentation_params['model_type']
+                if self.model_type not in self.AVAILABLE_MODELS:
+                    self.model_type = 'nuclei'
+            else:
+                self.model_type = 'nuclei'
         except Exception as e:
             show_warning(f"Error loading nuclei segmentation parameters: {str(e)}")
             self.min_size = 150
             self.cellprob_threshold = 0.0
+            self.flow_threshold = 0.4
             self.diameter = None
+            self.model_type = 'nuclei'
         
         # Store segmentation state for interactive updates
         self.model = None
@@ -71,6 +86,42 @@ class NucleiSegmentationWidget(QWidget):
         params_label = QLabel("Segmentation Parameters:")
         params_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         self.layout().addWidget(params_label)
+        
+        # Model type combo box
+        model_layout = QHBoxLayout()
+        model_label = QLabel("Model:")
+        model_label.setMinimumWidth(100)
+        model_layout.addWidget(model_label)
+        
+        model_help = QLabel("?")
+        model_help.setStyleSheet(
+            "QLabel {"
+            "color: #A0A0A0;"
+            "font-weight: bold;"
+            "font-size: 14px;"
+            "background-color: transparent;"
+            "border: 1px solid #A0A0A0;"
+            "border-radius: 10px;"
+            "min-width: 20px;"
+            "max-width: 20px;"
+            "min-height: 20px;"
+            "max-height: 20px;"
+            "}"
+        )
+        model_help.setAlignment(Qt.AlignCenter)
+        model_help.setCursor(Qt.WhatsThisCursor)
+        model_help.setToolTip(
+            "Cellpose model type to use for segmentation.\n"
+            "• nuclei: Optimized for nuclear segmentation\n"
+            "• cyto3: Latest cytoplasm model with best performance"
+        )
+        model_layout.addWidget(model_help)
+        
+        self.model_type_combo = QComboBox()
+        self.model_type_combo.addItems(self.AVAILABLE_MODELS)
+        self.model_type_combo.setCurrentText(self.model_type)
+        model_layout.addWidget(self.model_type_combo)
+        self.layout().addLayout(model_layout)
         
         # Min size spinbox
         minsize_layout = QHBoxLayout()
@@ -155,6 +206,46 @@ class NucleiSegmentationWidget(QWidget):
         self.cellprob_threshold_spinbox.setValue(self.cellprob_threshold)
         cellprob_layout.addWidget(self.cellprob_threshold_spinbox)
         self.layout().addLayout(cellprob_layout)
+        
+        # Flow Threshold parameter
+        flow_layout = QHBoxLayout()
+        flow_label = QLabel("Flow Thresh:")
+        flow_label.setMinimumWidth(100)
+        flow_layout.addWidget(flow_label)
+        
+        flow_help = QLabel("?")
+        flow_help.setStyleSheet(
+            "QLabel {"
+            "color: #A0A0A0;"
+            "font-weight: bold;"
+            "font-size: 14px;"
+            "background-color: transparent;"
+            "border: 1px solid #A0A0A0;"
+            "border-radius: 10px;"
+            "min-width: 20px;"
+            "max-width: 20px;"
+            "min-height: 20px;"
+            "max-height: 20px;"
+            "}"
+        )
+        flow_help.setAlignment(Qt.AlignCenter)
+        flow_help.setCursor(Qt.WhatsThisCursor)
+        flow_help.setToolTip(
+            "Flow threshold for Cellpose segmentation.\n"
+            "Controls the maximum allowed error of the flows for each mask.\n"
+            "Increase to get more masks; decrease to get fewer, more accurate masks.\n"
+            "Typical range: 0.0 to 1.0."
+        )
+        flow_layout.addWidget(flow_help)
+        
+        self.flow_threshold_spinbox = QDoubleSpinBox()
+        self.flow_threshold_spinbox.setMinimum(0.0)
+        self.flow_threshold_spinbox.setMaximum(1.0)
+        self.flow_threshold_spinbox.setSingleStep(0.05)
+        self.flow_threshold_spinbox.setDecimals(2)
+        self.flow_threshold_spinbox.setValue(self.flow_threshold)
+        flow_layout.addWidget(self.flow_threshold_spinbox)
+        self.layout().addLayout(flow_layout)
         
         # Diameter parameter
         diameter_layout = QHBoxLayout()
@@ -338,14 +429,18 @@ class NucleiSegmentationWidget(QWidget):
     def _on_save_default_clicked(self):
         """Handle save as default button click - save all current parameter values to JSON file."""
         try:
-            # Get current values from spinboxes
+            # Get current values from spinboxes and combo box
+            current_model_type = self.model_type_combo.currentText()
             current_min_size = self.minsize_spinbox.value()
             current_cellprob_threshold = self.cellprob_threshold_spinbox.value()
+            current_flow_threshold = self.flow_threshold_spinbox.value()
             current_diameter_value = self.diameter_spinbox.value()
             
             # Update instance variables
+            self.model_type = current_model_type
             self.min_size = current_min_size
             self.cellprob_threshold = current_cellprob_threshold
+            self.flow_threshold = current_flow_threshold
             self.diameter = None if current_diameter_value == 0 else current_diameter_value
             
             # Load existing parameters or create new dict
@@ -356,15 +451,17 @@ class NucleiSegmentationWidget(QWidget):
                 params = {}
             
             # Update all parameters
+            params['model_type'] = current_model_type
             params['min_size'] = current_min_size
             params['cellprob_threshold'] = current_cellprob_threshold
+            params['flow_threshold'] = current_flow_threshold
             params['diameter'] = current_diameter_value  # Save 0 for None/auto-detect
             
             # Save to JSON file
             with open(self.nuclei_segmentation_params_path, 'w') as f:
                 json.dump(params, f, indent=2)
             
-            show_info(f"Saved parameters as default: min_size={current_min_size}, cellprob_threshold={current_cellprob_threshold:.2f}, diameter={'auto' if current_diameter_value == 0 else current_diameter_value}")
+            show_info(f"Saved parameters as default: model={current_model_type}, min_size={current_min_size}, cellprob_threshold={current_cellprob_threshold:.2f}, flow_threshold={current_flow_threshold:.2f}, diameter={'auto' if current_diameter_value == 0 else current_diameter_value}")
         except Exception as e:
             show_warning(f"Error saving default values: {str(e)}")
             import traceback
@@ -453,10 +550,12 @@ class NucleiSegmentationWidget(QWidget):
             else:
                 show_info("Using CPU (GPU not available)")
             
-            # Initialize or reuse Cellpose model
-            if self.model is None:
-                # Model type "nuclei" for version 3.1.1.1
-                self.model = models.Cellpose(model_type='nuclei', gpu=use_GPU)
+            # Initialize or reuse Cellpose model (reinitialize if model type changed)
+            current_model_type = self.model_type_combo.currentText()
+            if self.model is None or not hasattr(self, '_loaded_model_type') or self._loaded_model_type != current_model_type:
+                show_info(f"Loading Cellpose model: {current_model_type}")
+                self.model = models.Cellpose(model_type=current_model_type, gpu=use_GPU)
+                self._loaded_model_type = current_model_type
             
             # Store preprocessed image data
             self.image_data = image_data
@@ -468,7 +567,7 @@ class NucleiSegmentationWidget(QWidget):
                 image_data,
                 diameter=self.diameter,
                 channels=[0, 0],  # Grayscale image
-                flow_threshold=0.4,  # Default flow threshold
+                flow_threshold=self.flow_threshold,
                 cellprob_threshold=self.cellprob_threshold,
             )
             
@@ -608,7 +707,9 @@ class NucleiSegmentationWidget(QWidget):
         """Handle Apply button click - recompute segmentation with current parameters.
         
         Only reruns the model if:
+        - model_type changed
         - cellprob_threshold changed
+        - flow_threshold changed
         - diameter changed
         - original masks are not stored in the layer
         
@@ -616,22 +717,28 @@ class NucleiSegmentationWidget(QWidget):
         """
         try:
             # Save old params to check for changes
+            old_model_type = self.model_type
             old_cellprob_threshold = self.cellprob_threshold
+            old_flow_threshold = self.flow_threshold
             old_diameter = self.diameter
             
             # Update current params to instance variables
+            self.model_type = self.model_type_combo.currentText()
             self.min_size = self.minsize_spinbox.value()
             self.cellprob_threshold = self.cellprob_threshold_spinbox.value()
+            self.flow_threshold = self.flow_threshold_spinbox.value()
             self.diameter = None if self.diameter_spinbox.value() == 0 else self.diameter_spinbox.value()
             
             # Check if we need to rerun the model
+            model_type_changed = old_model_type != self.model_type
             cellprob_threshold_changed = old_cellprob_threshold != self.cellprob_threshold
+            flow_threshold_changed = old_flow_threshold != self.flow_threshold
             diameter_changed = old_diameter != self.diameter
             original_masks_not_stored = (self.nuclei_layer is None or 
                                        not hasattr(self.nuclei_layer, '_original_masks_data') or 
                                        self.nuclei_layer._original_masks_data is None)
             
-            if cellprob_threshold_changed or diameter_changed or original_masks_not_stored:
+            if model_type_changed or cellprob_threshold_changed or flow_threshold_changed or diameter_changed or original_masks_not_stored:
                 # Need to rerun the model
                 masks = self.run_cellpose()
                 

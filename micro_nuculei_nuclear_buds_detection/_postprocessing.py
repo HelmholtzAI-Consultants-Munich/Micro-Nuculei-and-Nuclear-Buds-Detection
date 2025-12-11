@@ -22,7 +22,6 @@ def postprocess_detections(dataset_path: Path, image_path: Path, annotation_file
         return
     labels = np.unique(nuclei_segmentation)
     labels = labels[labels > 0]
-    print("labels: ", len(labels))
     H, W = nuclei_segmentation.shape
 
     # revert detections normalization
@@ -48,7 +47,6 @@ def postprocess_detections(dataset_path: Path, image_path: Path, annotation_file
             micro_nuclei_labels = [labs[idx].item() for idx in micro_nuclei_idx]
     else:
         micro_nuclei_labels = []
-    print("micro_nuclei_labels: ", micro_nuclei_labels)
 
     nuclear_buds_detections = detections[detections[:, 0] == CLASS_IDS["nuclear_buds"]]
     if nuclear_buds_detections.size > 0:
@@ -60,7 +58,6 @@ def postprocess_detections(dataset_path: Path, image_path: Path, annotation_file
             nuclear_buds_labels = [labs[idx].item() for idx in nuclear_buds_idx]
     else:
         nuclear_buds_labels = []
-    print("nuclear_buds_labels: ", nuclear_buds_labels)
 
     postprocessed_detections = pd.DataFrame(columns=["nucleus_id", "micro_nuclei", "nuclear_buds"])
     for lab in labels:

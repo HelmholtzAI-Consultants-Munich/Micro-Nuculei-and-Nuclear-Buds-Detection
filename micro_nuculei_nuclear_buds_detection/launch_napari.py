@@ -23,7 +23,7 @@ def main():
     
     # Create napari viewer
     viewer = napari.Viewer(title="Micro-Nuclei and Nuclear Buds Detection")
-    viewer.window._qt_viewer.controls.hide()
+    # viewer.window._qt_viewer.controls.hide()
 
     
     # Load widgets after a short delay to ensure window is ready

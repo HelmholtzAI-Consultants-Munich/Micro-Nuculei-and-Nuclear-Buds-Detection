@@ -16,6 +16,7 @@ from ._constants import (
     NUCLEI_SEGMENTATION_PARAMS_PATH,
     NUCLEI_SEGMENTATION_PARAMS_DEFAULT,
     ANNOTATIONS_SUBFOLDER,
+    ANNOTATIONS_SNAPSHOTS_SUBFOLDER,
     NUCLEI_SEGMENTATION_SUBFOLDER,
     POSTPROCESSING_SUBFOLDER,
 )
@@ -52,6 +53,7 @@ class DataManagementWidget(QWidget):
         self.image_files: List[Path] = []
         self.current_image_index: int = -1
         self.annotation_dir: Optional[Path] = None
+        self.annotations_snapshots_dir: Optional[Path] = None
         self.nuclei_segmentation_dir: Optional[Path] = None
 
         # Create layout
@@ -174,6 +176,8 @@ class DataManagementWidget(QWidget):
             self.folder_path_edit.setText(str(self.dataset_path))
             self.annotation_dir = self.dataset_path / ANNOTATIONS_SUBFOLDER
             self.annotation_dir.mkdir(exist_ok=True)
+            self.annotations_snapshots_dir = self.dataset_path / ANNOTATIONS_SNAPSHOTS_SUBFOLDER
+            self.annotations_snapshots_dir.mkdir(exist_ok=True)
             self.nuclei_segmentation_dir = self.dataset_path / NUCLEI_SEGMENTATION_SUBFOLDER
             self.nuclei_segmentation_dir.mkdir(exist_ok=True)
             self.postprocessing_dir = self.dataset_path / POSTPROCESSING_SUBFOLDER
@@ -183,10 +187,6 @@ class DataManagementWidget(QWidget):
                 with open(self.nuclei_segmentation_params_path, 'w') as f:
                     json.dump(NUCLEI_SEGMENTATION_PARAMS_DEFAULT, f)
             self._scan_images()
-            self._update_image_list()
-            # Update Save button state (disabled initially, no image loaded)
-            if hasattr(self, 'save_button'):
-                self.save_button.setEnabled(False)
 
             # Load Micro-Nuclei Detection widget
             self.detection_widget = DetectionWidget(self.viewer)
@@ -209,6 +209,12 @@ class DataManagementWidget(QWidget):
                 name="Nuclei Segmentation",
                 area="right"
             )
+            
+            # Update image list AFTER widgets are created so _is_annotated() works correctly
+            self._update_image_list()
+            # Update Save button state (disabled initially, no image loaded)
+            if hasattr(self, 'save_button'):
+                self.save_button.setEnabled(False)
 
     def _scan_images(self):
         """Scan the dataset folder recursively for .tif and .tiff images."""
@@ -375,11 +381,98 @@ class DataManagementWidget(QWidget):
             return self.segmentation_widget.save_segmentation(current_image)
         return None
 
+    def _save_annotation_snapshot(self):
+        """Save a snapshot of the current view with bounding box annotations visible.
+        
+        Captures the entire image at its native resolution.
+        
+        Returns:
+            Path to saved snapshot file or None if error
+        """
+        if self.current_image_index < 0 or not self.image_files:
+            return None
+        
+        if not hasattr(self, 'annotations_snapshots_dir') or not self.annotations_snapshots_dir:
+            return None
+        
+        current_image = self.image_files[self.current_image_index]
+        
+        try:
+            # Store current visibility state of layers
+            layer_visibility = {}
+            for layer in self.viewer.layers:
+                layer_visibility[layer.name] = layer.visible
+            
+            # Store current camera state to restore later
+            current_camera_zoom = self.viewer.camera.zoom
+            current_camera_center = self.viewer.camera.center
+            
+            # Get image dimensions for full resolution capture
+            image_layer = None
+            for layer in self.viewer.layers:
+                if isinstance(layer, napari.layers.Image):
+                    image_layer = layer
+                    break
+            
+            if image_layer is None:
+                return None
+            
+            # Get image shape (height, width)
+            image_shape = image_layer.data.shape[:2]
+            image_height, image_width = image_shape
+            
+            # Ensure image and annotation layers are visible, hide nuclei segmentation
+            for layer in self.viewer.layers:
+                if isinstance(layer, napari.layers.Image):
+                    layer.visible = True
+                elif isinstance(layer, napari.layers.Shapes):
+                    if layer.name == ANNOTATION_LAYER_NAME:
+                        layer.visible = True
+                    elif layer.name == NUCLEI_SEGMENTATION_LAYER_NAME:
+                        layer.visible = False
+            
+            # Reset view to show entire image
+            self.viewer.reset_view()
+            
+            # Capture screenshot at image's native resolution
+            screenshot = self.viewer.screenshot(
+                canvas_only=True,
+                size=(image_height, image_width)
+            )
+            
+            # Restore original camera state
+            self.viewer.camera.zoom = current_camera_zoom
+            self.viewer.camera.center = current_camera_center
+            
+            # Restore original visibility
+            for layer in self.viewer.layers:
+                if layer.name in layer_visibility:
+                    layer.visible = layer_visibility[layer.name]
+            
+            # Determine output path (preserving subdirectory structure)
+            try:
+                relative_path = current_image.relative_to(self.dataset_path)
+                snapshot_file = self.annotations_snapshots_dir / relative_path.with_suffix('.png')
+                snapshot_file.parent.mkdir(parents=True, exist_ok=True)
+            except (ValueError, AttributeError):
+                snapshot_file = self.annotations_snapshots_dir / f"{current_image.stem}.png"
+            
+            # Save screenshot
+            io.imsave(str(snapshot_file), screenshot)
+            
+            return snapshot_file
+            
+        except Exception as e:
+            show_warning(f"Error saving annotation snapshot: {str(e)}")
+            import traceback
+            print(traceback.format_exc())
+            return None
+
     def _save_current_image(self):
-        """Save current annotations and nuclei segmentation, then run postprocessing.
+        """Save current annotations, nuclei segmentation, snapshot, then run postprocessing.
         
         This unified method handles all saving operations for the current image.
-        It saves annotations, nuclei segmentation, runs postprocessing, and updates the UI.
+        It saves annotations, nuclei segmentation, annotation snapshot, runs postprocessing, and updates the UI.
         
         Returns:
             bool: True if save was successful, False otherwise, None if no current image
@@ -395,6 +488,9 @@ class DataManagementWidget(QWidget):
         
         # Save nuclei segmentation
         nuclei_segmentation_file = self._save_current_nuclei_segmentation()
+        
+        # Save annotation snapshot (screenshot with bounding boxes visible)
+        self._save_annotation_snapshot()
         
         # Run postprocessing
         postprocess_detections(self.dataset_path, current_image, annotation_file, nuclei_segmentation_file)
@@ -450,6 +546,27 @@ class DataManagementWidget(QWidget):
             return self.segmentation_widget.load_segmentation(image_path)
         return False
 
+    def _auto_adjust_contrast(self, image_layer, image_data):
+        """Auto-adjust contrast limits using percentiles for better visibility.
+        
+        Args:
+            image_layer: The napari image layer to adjust
+            image_data: The image data array
+        """
+        try:
+            # Use 1st and 99th percentiles for robust contrast adjustment
+            # This works well for microscopy images with outliers
+            p_low, p_high = np.percentile(image_data, (1, 99))
+            
+            # Ensure we have a valid range
+            if p_low >= p_high:
+                p_low = image_data.min()
+                p_high = image_data.max()
+            
+            image_layer.contrast_limits = (p_low, p_high)
+        except Exception:
+            # If percentile calculation fails, use min/max
+            image_layer.contrast_limits = (image_data.min(), image_data.max())
 
     def _load_image(self, image_path: Path):
         """Load an image into napari viewer."""
@@ -469,9 +586,12 @@ class DataManagementWidget(QWidget):
             # Handle multi-channel images
             if image_data.ndim == 3 and image_data.shape[2] <= 4:
                 # Assume it's a multi-channel image
-                self.viewer.add_image(image_data, name=image_path.stem)
+                image_layer = self.viewer.add_image(image_data, name=image_path.stem)
             else:
-                self.viewer.add_image(image_data, name=image_path.stem)
+                image_layer = self.viewer.add_image(image_data, name=image_path.stem)
+            
+            # Auto-adjust contrast limits using percentiles for better visibility
+            self._auto_adjust_contrast(image_layer, image_data)
             
             # Check if annotations exist and load them, otherwise create empty shapes layer
             annotations_loaded = False

@@ -46,7 +46,6 @@ pip install -e .
 ```
 
 This will install all required dependencies including:
-- `napari[all]>=0.4.0`
 - `cellpose==3.1.1.1`
 - `numpy`
 - `scikit-image`

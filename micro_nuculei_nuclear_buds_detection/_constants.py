@@ -25,6 +25,7 @@ CLASS_IDS: Dict[str, int] = {
 
 # Subfolders
 ANNOTATIONS_SUBFOLDER = "annotations"
+ANNOTATIONS_SNAPSHOTS_SUBFOLDER = "annotations_snapshots"
 NUCLEI_SEGMENTATION_SUBFOLDER = "nuclei_segmentation"
 POSTPROCESSING_SUBFOLDER = "postprocessing"
 
