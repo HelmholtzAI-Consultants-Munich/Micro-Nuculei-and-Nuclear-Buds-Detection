@@ -170,7 +170,7 @@ class NucleiSegmentationWidget(QWidget):
         
         # Cell Probability parameter
         cellprob_layout = QHBoxLayout()
-        cellprob_label = QLabel("Cell Score:")
+        cellprob_label = QLabel("Cell Prob.:")
         cellprob_label.setMinimumWidth(100)
         cellprob_layout.addWidget(cellprob_label)
         
@@ -193,7 +193,7 @@ class NucleiSegmentationWidget(QWidget):
         cellprob_help.setCursor(Qt.WhatsThisCursor)
         cellprob_help.setToolTip(
             "Cell score for Cellpose segmentation.\n"
-            "Decrease if not as many nuceli as you’d expect are shown.\n Increase if too many are shown.\n"
+            "Decrease to expand the masks' size.\n Increase to reduce it.\n"
             "Typical range: -6.0 to 6.0. Default: 0.0"
         )
         cellprob_layout.addWidget(cellprob_help)
@@ -232,7 +232,6 @@ class NucleiSegmentationWidget(QWidget):
         flow_help.setCursor(Qt.WhatsThisCursor)
         flow_help.setToolTip(
             "Flow threshold for Cellpose segmentation.\n"
-            "Controls the maximum allowed error of the flows for each mask.\n"
             "Increase to get more masks; decrease to get fewer, more accurate masks.\n"
             "Typical range: 0.0 to 1.0."
         )

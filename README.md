@@ -23,7 +23,7 @@ A [napari](https://napari.org) plugin for detecting and annotating micro-nuclei 
 
 ### Install from Source
 
-Run the following commands in the terminall (or in Anaconda prompt for Windows).
+Run the following commands in the terminal (or in Anaconda prompt for Windows).
 
 1. Clone the repository:
 
@@ -32,14 +32,7 @@ git clone https://github.com/HelmholtzAI-Consultants-Munich/Micro-Nuculei-and-Nu
 cd Micro-Nuculei-and-Nuclear-Buds-Detection
 ```
 
-2. Create and activate a conda virtual environment:
-
-```bash
-conda create -n buds python=3.12
-conda activate buds
-```
-
-3. Install the package in development mode:
+2. Install the package in development mode:
 
 ```bash
 pip install -e .
@@ -55,13 +48,7 @@ This will install all required dependencies including:
 
 To stat the application run the following commands in the terminall (or in Anaconda prompt for Windows).
 
-1. Activate your conda environment:
-
-```bash
-conda activate buds
-```
-
-2. Launch napari with all widgets pre-loaded using the command-line tool:
+Launch napari with all widgets pre-loaded using the command-line tool:
 
 ```bash
 mb-detect
@@ -79,11 +66,13 @@ mb-detect
 
 Nuclei segmentation runs automatically when an image is loaded. To customize the segmentation, use the **Nuclei Segmentation** widget to adjust parameters:
 
+- **Model**: Ceelpose model type to use for the segmentation.
 - **Min Area**: Minimum nucleus area in pixels
-- **Cell Probability Threshold**: Cellpose confidence threshold
+- **Cell Probability**: Controls how large the masks are.
+- **Flow Threshold**: Controls the number of masks that are predicted.
 - **Diameter**: Expected nucleus diameter (0 for auto-detection)
 
-After changing parameters, click **Segment Nuclei** to re-run the segmentation with the new settings.
+After changing parameters, click **Apply** to see the segmentation results with the new settings.
 
 #### 3. Annotate Detections
 

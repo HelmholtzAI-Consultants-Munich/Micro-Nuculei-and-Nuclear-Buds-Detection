@@ -147,7 +147,7 @@ class TestManualRemoveSmallMasks:
         params_file.parent.mkdir(parents=True, exist_ok=True)
         widget = NucleiSegmentationWidget(mock_napari_viewer, params_file)
         qtbot.addWidget(widget)
-        filtered = widget._manual_remove_small_masks(synthetic_mask_2d, min_size=0)
+        filtered = widget.remove_small_masks(synthetic_mask_2d, min_size=0)
         
         # Should keep all labels
         unique_original = np.unique(synthetic_mask_2d)
@@ -166,7 +166,7 @@ class TestManualRemoveSmallMasks:
         params_file.parent.mkdir(parents=True, exist_ok=True)
         widget = NucleiSegmentationWidget(mock_napari_viewer, params_file)
         qtbot.addWidget(widget)
-        filtered = widget._manual_remove_small_masks(mask, min_size=100)
+        filtered = widget.remove_small_masks(mask, min_size=100)
         
         # Small region (label 2) should be removed
         unique_filtered = np.unique(filtered)
@@ -186,7 +186,7 @@ class TestManualRemoveSmallMasks:
         params_file.parent.mkdir(parents=True, exist_ok=True)
         widget = NucleiSegmentationWidget(mock_napari_viewer, params_file)
         qtbot.addWidget(widget)
-        filtered = widget._manual_remove_small_masks(mask, min_size=10)
+        filtered = widget.remove_small_masks(mask, min_size=10)
         
         # All labels should be removed, only background (0) remains
         unique_filtered = np.unique(filtered)
@@ -207,7 +207,7 @@ class TestManualRemoveSmallMasks:
         params_file.parent.mkdir(parents=True, exist_ok=True)
         widget = NucleiSegmentationWidget(mock_napari_viewer, params_file)
         qtbot.addWidget(widget)
-        filtered = widget._manual_remove_small_masks(mask, min_size=50)
+        filtered = widget.remove_small_masks(mask, min_size=50)
         
         # Labels 1 and 3 should remain, relabeled to 1 and 2
         assert filtered.shape == mask.shape
@@ -223,7 +223,7 @@ class TestManualRemoveSmallMasks:
         params_file.parent.mkdir(parents=True, exist_ok=True)
         widget = NucleiSegmentationWidget(mock_napari_viewer, params_file)
         qtbot.addWidget(widget)
-        filtered = widget._manual_remove_small_masks(synthetic_mask_empty, min_size=10)
+        filtered = widget.remove_small_masks(synthetic_mask_empty, min_size=10)
         
         # Should remain empty
         assert np.all(filtered == 0)
@@ -235,7 +235,7 @@ class TestManualRemoveSmallMasks:
         params_file.parent.mkdir(parents=True, exist_ok=True)
         widget = NucleiSegmentationWidget(mock_napari_viewer, params_file)
         qtbot.addWidget(widget)
-        filtered = widget._manual_remove_small_masks(synthetic_mask_2d, min_size=0)
+        filtered = widget.remove_small_masks(synthetic_mask_2d, min_size=0)
         
         assert filtered.shape == synthetic_mask_2d.shape
         assert filtered.dtype == synthetic_mask_2d.dtype

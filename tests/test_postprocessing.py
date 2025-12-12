@@ -148,12 +148,12 @@ class TestPostprocessDetections:
             pytest.skip(f"Postprocessing failed (may need better empty handling): {e}")
         
         # Function returns None, but should create files
-        # Check that CSV file was created (preserving subdirectory structure)
-        csv_file = postprocessing_dir / "images_1" / "test_image.csv"
-        assert csv_file.exists(), f"Postprocessing CSV file not created: {csv_file}"
+        # Check that TSV file was created (preserving subdirectory structure)
+        tsv_file = postprocessing_dir / "images_1" / "test_image.csv"
+        assert tsv_file.exists(), f"Postprocessing TSV file not created: {tsv_file}"
         
-        # Read and verify CSV content
-        df = pd.read_csv(csv_file)
+        # Read and verify TSV content
+        df = pd.read_csv(tsv_file, sep='\t')
         assert 'nucleus_id' in df.columns
         assert 'micro_nuclei' in df.columns
         assert 'nuclear_buds' in df.columns
@@ -197,7 +197,7 @@ class TestPostprocessDetections:
         assert summary_file.exists(), "Summary statistics file not created"
         
         # Verify summary statistics content
-        summary_df = pd.read_csv(summary_file)
+        summary_df = pd.read_csv(summary_file, sep='\t')
         assert 'image_id' in summary_df.columns
         assert len(summary_df) > 0
         # Check that our image is in the summary
@@ -236,10 +236,10 @@ class TestPostprocessDetections:
             # Empty file might cause np.loadtxt to fail
             pytest.skip(f"Empty file handling may need improvement: {e}")
         
-        # Function should return None and not create CSV file for empty detections
-        csv_file = postprocessing_dir / "test_image.csv"
+        # Function should return None and not create TSV file for empty detections
+        tsv_file = postprocessing_dir / "test_image.csv"
         # File should not exist because function returns early
-        assert not csv_file.exists(), "CSV file should not be created for empty detections"
+        assert not tsv_file.exists(), "TSV file should not be created for empty detections"
 
     def test_postprocess_detections_empty_segmentation(self, temp_dir):
         """Test postprocessing with empty nuclei segmentation."""
@@ -267,8 +267,8 @@ class TestPostprocessDetections:
         )
         
         # Function should return None without creating files
-        csv_file = dataset_path / POSTPROCESSING_SUBFOLDER / "test_image.csv"
-        assert not csv_file.exists(), "CSV file should not be created for empty segmentation"
+        tsv_file = dataset_path / POSTPROCESSING_SUBFOLDER / "test_image.csv"
+        assert not tsv_file.exists(), "TSV file should not be created for empty segmentation"
 
     def test_postprocess_detections_only_micro_nuclei(self, synthetic_mask_2d, temp_dir):
         """Test postprocessing with only micro-nuclei detections."""
@@ -303,12 +303,12 @@ class TestPostprocessDetections:
         except (IndexError, ValueError, TypeError) as e:
             pytest.skip(f"Postprocessing failed: {e}")
         
-        # Check that CSV file was created
-        csv_file = postprocessing_dir / "test_image.csv"
-        assert csv_file.exists()
+        # Check that TSV file was created
+        tsv_file = postprocessing_dir / "test_image.csv"
+        assert tsv_file.exists()
         
         # Read and verify content
-        df = pd.read_csv(csv_file)
+        df = pd.read_csv(tsv_file, sep='\t')
         assert 'micro_nuclei' in df.columns
         assert 'nuclear_buds' in df.columns
         # Total micro_nuclei count should be 2
@@ -346,9 +346,9 @@ class TestPostprocessDetections:
         except (IndexError, ValueError, TypeError) as e:
             pytest.skip(f"Postprocessing failed: {e}")
         
-        # Check that CSV file was created in matching subdirectory structure
-        csv_file = dataset_path / POSTPROCESSING_SUBFOLDER / "subdir1" / "subdir2" / "test_image.csv"
-        assert csv_file.exists(), f"CSV file should preserve subdirectory structure: {csv_file}"
+        # Check that TSV file was created in matching subdirectory structure
+        tsv_file = dataset_path / POSTPROCESSING_SUBFOLDER / "subdir1" / "subdir2" / "test_image.csv"
+        assert tsv_file.exists(), f"TSV file should preserve subdirectory structure: {tsv_file}"
 
 
 class TestWriteSummaryStatistics:
@@ -378,7 +378,7 @@ class TestWriteSummaryStatistics:
         assert summary_file.exists(), "Summary statistics file should be created"
         
         # Verify content
-        df = pd.read_csv(summary_file)
+        df = pd.read_csv(summary_file, sep='\t')
         assert 'image_id' in df.columns
         assert 'micro_nuclei_count' in df.columns
         assert 'nuclear_buds_count' in df.columns
@@ -410,7 +410,7 @@ class TestWriteSummaryStatistics:
             '4+_micro_nuclei': [0.0],
             '4+_nuclear_buds': [0.0],
         })
-        initial_df.to_csv(summary_file, index=False)
+        initial_df.to_csv(summary_file, index=False, sep='\t')
         
         # Add new image
         image_path = temp_dir / "image2.tif"
@@ -425,7 +425,7 @@ class TestWriteSummaryStatistics:
         
         # Verify both images are in the file
         summary_file = dataset_path / POSTPROCESSING_SUBFOLDER / "summary_statistics.csv"
-        df = pd.read_csv(summary_file)
+        df = pd.read_csv(summary_file, sep='\t')
         assert len(df) == 2
         assert 'image1.tif' in df['image_id'].values
         assert str(image_path.relative_to(dataset_path)) in df['image_id'].values
@@ -459,7 +459,7 @@ class TestWriteSummaryStatistics:
             '4+_micro_nuclei': [0.0],
             '4+_nuclear_buds': [0.0],
         })
-        initial_df.to_csv(summary_file, index=False)
+        initial_df.to_csv(summary_file, index=False, sep='\t')
         
         # Update with new data for same image
         postprocessed_detections = pd.DataFrame({
@@ -472,7 +472,7 @@ class TestWriteSummaryStatistics:
         
         # Verify only one row exists (overwritten, not appended)
         summary_file = dataset_path / POSTPROCESSING_SUBFOLDER / "summary_statistics.csv"
-        df = pd.read_csv(summary_file)
+        df = pd.read_csv(summary_file, sep='\t')
         assert len(df) == 1
         assert df.loc[0, 'micro_nuclei_count'] == 3  # Updated value (2+1)
         assert df.loc[0, 'nuclear_buds_count'] == 1  # Updated value

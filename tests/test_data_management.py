@@ -27,6 +27,7 @@ if PYTEST_QT_AVAILABLE and NAPARI_AVAILABLE:
     )
     from micro_nuculei_nuclear_buds_detection._constants import (
         ANNOTATION_LAYER_NAME,
+        NUCLEI_SEGMENTATION_LAYER_NAME,
         get_napari_color,
         CLASS_NAMES,
         ANNOTATIONS_SUBFOLDER,
@@ -41,289 +42,7 @@ else:
     CLASS_NAMES = None
 
 
-class TestManualRemoveSmallMasks:
-    """Tests for _manual_remove_small_masks method in DataManagementWidget."""
 
-    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
-    def test_manual_remove_small_masks_no_filtering(self, mock_napari_viewer, qtbot):
-        if DataManagementWidget is None:
-            pytest.skip("Dependencies not available")
-        """Test mask filtering with min_size=0 (no filtering)."""
-        widget = DataManagementWidget(mock_napari_viewer)
-        qtbot.addWidget(widget)
-        
-        # Create a mask with multiple regions
-        mask = np.zeros((50, 50), dtype=np.int32)
-        mask[10:20, 10:20] = 1
-        mask[25:35, 25:35] = 2
-        
-        filtered = widget._manual_remove_small_masks(mask, min_size=0)
-        
-        # Should keep all labels
-        unique_original = np.unique(mask)
-        unique_filtered = np.unique(filtered)
-        assert len(unique_filtered) == len(unique_original)
-
-    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
-    def test_manual_remove_small_masks_filter_small(self, mock_napari_viewer, qtbot):
-        """Test filtering out small masks."""
-        if DataManagementWidget is None:
-            pytest.skip("Dependencies not available")
-        widget = DataManagementWidget(mock_napari_viewer)
-        qtbot.addWidget(widget)
-        
-        # Create a mask with one large and one small region
-        mask = np.zeros((50, 50), dtype=np.int32)
-        mask[10:30, 10:30] = 1  # Large region (20x20 = 400 pixels)
-        mask[5:8, 5:8] = 2  # Small region (3x3 = 9 pixels)
-        
-        filtered = widget._manual_remove_small_masks(mask, min_size=100)
-        
-        # Small region (label 2) should be removed
-        unique_filtered = np.unique(filtered)
-        assert 2 not in unique_filtered
-        assert 1 in unique_filtered
-        assert np.max(filtered) == 1
-
-    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
-    def test_manual_remove_small_masks_preserves_shape(self, mock_napari_viewer, qtbot):
-        """Test that filtering preserves mask shape."""
-        if DataManagementWidget is None:
-            pytest.skip("Dependencies not available")
-        widget = DataManagementWidget(mock_napari_viewer)
-        qtbot.addWidget(widget)
-        
-        mask = np.zeros((30, 30), dtype=np.int32)
-        mask[10:20, 10:20] = 1
-        
-        filtered = widget._manual_remove_small_masks(mask, min_size=0)
-        
-        assert filtered.shape == mask.shape
-        assert filtered.dtype == mask.dtype
-
-
-class TestSaveAnnotations:
-    """Tests for _save_current_annotations method."""
-
-    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
-    def test_save_annotations_single_box(self, mock_napari_viewer, temp_dir, qtbot):
-        if DataManagementWidget is None:
-            pytest.skip("Dependencies not available")
-        """Test saving a single bounding box annotation."""
-        widget = DataManagementWidget(mock_napari_viewer)
-        qtbot.addWidget(widget)
-        widget.dataset_path = temp_dir
-        widget.annotation_dir = temp_dir / ANNOTATIONS_SUBFOLDER
-        widget.annotation_dir.mkdir()
-        widget.current_image_index = 0
-        widget.image_files = [temp_dir / "test_image.tif"]
-        
-        # Create mock image layer that will pass isinstance checks
-        # The issue: isinstance(layer, napari.layers.Image) fails with plain MagicMock
-        # Solution: Use spec with actual napari classes, or patch isinstance
-        if NAPARI_AVAILABLE:
-            # Use spec to make isinstance checks pass
-            image_layer = MagicMock(spec=napari.layers.Image)
-            annotation_layer = MagicMock(spec=napari.layers.Shapes)
-        else:
-            # Fallback: create mocks and patch isinstance
-            image_layer = MagicMock()
-            annotation_layer = MagicMock()
-        
-        image_layer.data = np.zeros((100, 100), dtype=np.uint8)
-        annotation_layer.name = ANNOTATION_LAYER_NAME
-        # Rectangle: [[x_min, y_min], [x_max, y_min], [x_max, y_max], [x_min, y_max]]
-        annotation_layer.data = [
-            np.array([[20, 20], [40, 20], [40, 40], [20, 40]])  # 20x20 box at (20, 20)
-        ]
-        # Color for micro-nuclei (class 0)
-        color = get_napari_color(0)
-        annotation_layer.edge_color = np.array([[color[0], color[1], color[2], 1.0]])
-        
-        mock_napari_viewer.layers = [image_layer, annotation_layer]
-        
-        # If napari not available, we need to patch isinstance to make checks pass
-        if not NAPARI_AVAILABLE:
-            # Create mock layer classes and patch napari module
-            class MockImageLayer:
-                pass
-            class MockShapesLayer:
-                pass
-            
-            with patch('micro_nuculei_nuclear_buds_detection._data_management_widget.napari') as mock_napari_module:
-                mock_napari_module.layers.Image = MockImageLayer
-                mock_napari_module.layers.Shapes = MockShapesLayer
-                # Make mocks instances of mock classes
-                image_layer.__class__ = MockImageLayer
-                annotation_layer.__class__ = MockShapesLayer
-                
-                # Save annotations
-                widget._save_current_annotations()
-        else:
-            # Save annotations (isinstance should work with spec)
-            widget._save_current_annotations()
-        
-        # Check that file was created
-        annotation_file = widget.annotation_dir / "test_image.txt"
-        assert annotation_file.exists()
-        
-        # Read and verify content
-        with open(annotation_file, 'r') as f:
-            lines = f.readlines()
-        
-        assert len(lines) == 1
-        parts = lines[0].strip().split()
-        assert len(parts) == 5
-        assert parts[0] == "0"  # class_id for micro-nuclei
-        
-        # Verify normalized coordinates
-        # Center should be at (30, 30) in 100x100 image = (0.3, 0.3)
-        # Width/height = 20/100 = 0.2
-        center_y = float(parts[1])
-        center_x = float(parts[2])
-        height = float(parts[3])
-        width = float(parts[4])
-        
-        assert abs(center_x - 0.3) < 0.01
-        assert abs(center_y - 0.3) < 0.01
-        assert abs(width - 0.2) < 0.01
-        assert abs(height - 0.2) < 0.01
-
-    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
-    def test_save_annotations_multiple_boxes(self, mock_napari_viewer, temp_dir, qtbot):
-        if DataManagementWidget is None:
-            pytest.skip("Dependencies not available")
-        """Test saving multiple bounding box annotations."""
-        widget = DataManagementWidget(mock_napari_viewer)
-        qtbot.addWidget(widget)
-        widget.dataset_path = temp_dir
-        widget.annotation_dir = temp_dir / "annotations"
-        widget.annotation_dir.mkdir()
-        widget.current_image_index = 0
-        widget.image_files = [temp_dir / "test_image.tif"]
-        
-        # Create mock image layer with spec so isinstance checks pass
-        image_layer = MagicMock(spec=napari.layers.Image)
-        image_layer.data = np.zeros((200, 200), dtype=np.uint8)
-        mock_napari_viewer.layers = [image_layer]
-        
-        # Create mock annotation layer with multiple rectangles
-        annotation_layer = MagicMock(spec=napari.layers.Shapes)
-        annotation_layer.name = ANNOTATION_LAYER_NAME
-        annotation_layer.data = [
-            np.array([[10, 10], [30, 10], [30, 30], [10, 30]]),  # Box 1
-            np.array([[50, 50], [70, 50], [70, 70], [50, 70]]),  # Box 2
-        ]
-        # Different colors for different classes
-        color0 = get_napari_color(0)
-        color1 = get_napari_color(1)
-        annotation_layer.edge_color = np.array([
-            [color0[0], color0[1], color0[2], 1.0],
-            [color1[0], color1[1], color1[2], 1.0],
-        ])
-        mock_napari_viewer.layers.append(annotation_layer)
-        
-        # Save annotations
-        widget._save_current_annotations()
-        
-        # Check that file was created
-        annotation_file = widget.annotation_dir / "test_image.txt"
-        assert annotation_file.exists()
-        
-        # Read and verify content
-        with open(annotation_file, 'r') as f:
-            lines = f.readlines()
-        
-        assert len(lines) == 2
-        # First annotation should be class 0
-        parts0 = lines[0].strip().split()
-        assert parts0[0] == "0"
-        # Second annotation should be class 1
-        parts1 = lines[1].strip().split()
-        assert parts1[0] == "1"
-
-    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
-    def test_save_annotations_empty_layer(self, mock_napari_viewer, temp_dir, qtbot):
-        if DataManagementWidget is None:
-            pytest.skip("Dependencies not available")
-        """Test saving when annotation layer is empty."""
-        widget = DataManagementWidget(mock_napari_viewer)
-        qtbot.addWidget(widget)
-        widget.dataset_path = temp_dir
-        widget.annotation_dir = temp_dir / "annotations"
-        widget.annotation_dir.mkdir()
-        widget.current_image_index = 0
-        widget.image_files = [temp_dir / "test_image.tif"]
-        
-        # Create mock image layer with spec so isinstance checks pass
-        image_layer = MagicMock(spec=napari.layers.Image)
-        image_layer.data = np.zeros((100, 100), dtype=np.uint8)
-        mock_napari_viewer.layers = [image_layer]
-        
-        # Create empty annotation layer
-        annotation_layer = MagicMock(spec=napari.layers.Shapes)
-        annotation_layer.name = ANNOTATION_LAYER_NAME
-        annotation_layer.data = []
-        annotation_layer.edge_color = np.array([[1.0, 0.0, 0.0, 1.0]])
-        mock_napari_viewer.layers.append(annotation_layer)
-        
-        # Save annotations
-        widget._save_current_annotations()
-        
-        # File should be created but empty
-        annotation_file = widget.annotation_dir / "test_image.txt"
-        assert annotation_file.exists()
-        
-        with open(annotation_file, 'r') as f:
-            content = f.read()
-        assert content == ""
-
-    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
-    def test_save_annotations_coordinate_normalization(self, mock_napari_viewer, temp_dir, qtbot):
-        if DataManagementWidget is None:
-            pytest.skip("Dependencies not available")
-        """Test that coordinates are properly normalized to [0, 1] range."""
-        widget = DataManagementWidget(mock_napari_viewer)
-        qtbot.addWidget(widget)
-        widget.dataset_path = temp_dir
-        widget.annotation_dir = temp_dir / "annotations"
-        widget.annotation_dir.mkdir()
-        widget.current_image_index = 0
-        widget.image_files = [temp_dir / "test_image.tif"]
-        
-        # Create mock image layer with spec so isinstance checks pass
-        image_layer = MagicMock(spec=napari.layers.Image)
-        image_layer.data = np.zeros((50, 50), dtype=np.uint8)
-        mock_napari_viewer.layers = [image_layer]
-        
-        # Create annotation at image boundaries
-        annotation_layer = MagicMock(spec=napari.layers.Shapes)
-        annotation_layer.name = ANNOTATION_LAYER_NAME
-        # Box at (0, 0) with size (50, 50) - covers entire image
-        annotation_layer.data = [
-            np.array([[0, 0], [50, 0], [50, 50], [0, 50]])
-        ]
-        color = get_napari_color(0)
-        annotation_layer.edge_color = np.array([[color[0], color[1], color[2], 1.0]])
-        mock_napari_viewer.layers.append(annotation_layer)
-        
-        widget._save_current_annotations()
-        
-        annotation_file = widget.annotation_dir / "test_image.txt"
-        with open(annotation_file, 'r') as f:
-            line = f.readline().strip()
-        
-        parts = line.split()
-        center_y = float(parts[1])
-        center_x = float(parts[2])
-        height = float(parts[3])
-        width = float(parts[4])
-        
-        # All values should be in [0, 1]
-        assert 0.0 <= center_x <= 1.0
-        assert 0.0 <= center_y <= 1.0
-        assert 0.0 <= width <= 1.0
-        assert 0.0 <= height <= 1.0
 
 
 class TestLoadAnnotations:
@@ -586,4 +305,296 @@ class TestAnnotationRoundTrip:
             assert abs(loaded_x_max - original_x_max) < 1
             assert abs(loaded_y_min - original_y_min) < 1
             assert abs(loaded_y_max - original_y_max) < 1
+
+
+class TestSaveCurrentImage:
+    """Tests for _save_current_image method."""
+
+    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
+    def test_save_current_image_no_current_image(self, mock_napari_viewer, qtbot):
+        """Test _save_current_image when there's no current image."""
+        if DataManagementWidget is None:
+            pytest.skip("Dependencies not available")
+        widget = DataManagementWidget(mock_napari_viewer)
+        qtbot.addWidget(widget)
+        
+        # No current image index set
+        widget.current_image_index = -1
+        widget.image_files = []
+        
+        result = widget._save_current_image()
+        
+        # Should return None when no current image
+        assert result is None
+
+    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
+    def test_save_current_image_calls_all_methods(self, mock_napari_viewer, temp_dir, qtbot):
+        """Test that _save_current_image calls all required methods."""
+        if DataManagementWidget is None:
+            pytest.skip("Dependencies not available")
+        
+        # Import widgets
+        from micro_nuculei_nuclear_buds_detection._widget import DetectionWidget
+        from micro_nuculei_nuclear_buds_detection._nuclei_segmentation_widget import NucleiSegmentationWidget
+        import json
+        from micro_nuculei_nuclear_buds_detection._constants import NUCLEI_SEGMENTATION_PARAMS_PATH, NUCLEI_SEGMENTATION_PARAMS_DEFAULT
+        
+        widget = DataManagementWidget(mock_napari_viewer)
+        qtbot.addWidget(widget)
+        
+        # Set up widget state
+        widget.dataset_path = temp_dir
+        widget.annotation_dir = temp_dir / ANNOTATIONS_SUBFOLDER
+        widget.annotation_dir.mkdir(parents=True, exist_ok=True)
+        widget.nuclei_segmentation_dir = temp_dir / NUCLEI_SEGMENTATION_SUBFOLDER
+        widget.nuclei_segmentation_dir.mkdir(parents=True, exist_ok=True)
+        widget.postprocessing_dir = temp_dir / POSTPROCESSING_SUBFOLDER
+        widget.postprocessing_dir.mkdir(parents=True, exist_ok=True)
+        widget.current_image_index = 0
+        widget.image_files = [temp_dir / "test_image.tif"]
+        
+        # Create params file for segmentation widget
+        widget.nuclei_segmentation_params_path = widget.nuclei_segmentation_dir / NUCLEI_SEGMENTATION_PARAMS_PATH
+        with open(widget.nuclei_segmentation_params_path, 'w') as f:
+            json.dump(NUCLEI_SEGMENTATION_PARAMS_DEFAULT, f)
+        
+        # Create actual widgets (not mocks)
+        widget.detection_widget = DetectionWidget(mock_napari_viewer)
+        widget.detection_widget.annotation_dir = widget.annotation_dir
+        widget.detection_widget.dataset_path = widget.dataset_path
+        qtbot.addWidget(widget.detection_widget)
+        
+        widget.segmentation_widget = NucleiSegmentationWidget(mock_napari_viewer, widget.nuclei_segmentation_params_path)
+        widget.segmentation_widget.nuclei_segmentation_dir = widget.nuclei_segmentation_dir
+        widget.segmentation_widget.dataset_path = widget.dataset_path
+        qtbot.addWidget(widget.segmentation_widget)
+        
+        # Create mock image layer
+        if NAPARI_AVAILABLE:
+            image_layer = MagicMock(spec=napari.layers.Image)
+        else:
+            image_layer = MagicMock()
+        image_layer.data = np.zeros((100, 100), dtype=np.uint8)
+        mock_napari_viewer.layers = [image_layer]
+        
+        # Create annotation layer with specific test data
+        if NAPARI_AVAILABLE:
+            annotation_layer = MagicMock(spec=napari.layers.Shapes)
+        else:
+            annotation_layer = MagicMock()
+        annotation_layer.name = ANNOTATION_LAYER_NAME
+        # Create a test rectangle: [[y_min, x_min], [y_max, x_min], [y_max, x_max], [y_min, x_max]]
+        # Box at (20, 20) with size 20x20
+        test_rectangle = np.array([[20, 20], [40, 20], [40, 40], [20, 40]])
+        annotation_layer.data = [test_rectangle]
+        # Color for micro-nuclei (class 0)
+        color = get_napari_color(0)
+        annotation_layer.edge_color = np.array([[color[0], color[1], color[2], 1.0]])
+        mock_napari_viewer.layers.append(annotation_layer)
+        
+        # Create a mock nuclei segmentation layer with specific masks data
+        if NAPARI_AVAILABLE:
+            nuclei_layer = MagicMock(spec=napari.layers.Shapes)
+        else:
+            nuclei_layer = MagicMock()
+        nuclei_layer.name = NUCLEI_SEGMENTATION_LAYER_NAME
+        # Create a specific test mask
+        test_mask = np.zeros((100, 100), dtype=np.int32)
+        test_mask[20:30, 20:30] = 1  # One nucleus at (20-30, 20-30)
+        test_mask[50:60, 50:60] = 2  # Another nucleus at (50-60, 50-60)
+        nuclei_layer._masks_data = test_mask
+        mock_napari_viewer.layers.append(nuclei_layer)
+        
+        # Mock _update_image_list
+        widget._update_image_list = MagicMock()
+        
+        # Mock postprocess_detections
+        with patch('micro_nuculei_nuclear_buds_detection._data_management_widget.postprocess_detections') as mock_postprocess:
+            result = widget._save_current_image()
+        
+        # Should return True on success
+        assert result is True
+        
+        # Verify all methods were called
+        # Check that annotation file was created (save_annotations was called)
+        annotation_file = widget.annotation_dir / "test_image.txt"
+        assert annotation_file.exists(), "Annotation file should be created by DetectionWidget.save_annotations()"
+        
+        # Verify annotation file content matches original
+        with open(annotation_file, 'r') as f:
+            lines = f.readlines()
+        assert len(lines) == 1, "Should have one annotation"
+        parts = lines[0].strip().split()
+        assert len(parts) == 5, "YOLO format should have 5 values"
+        assert parts[0] == "0", "Should be class 0 (micro-nuclei)"
+        # Verify normalized coordinates are reasonable (center should be around 0.3, size around 0.2)
+        center_x = float(parts[1])
+        center_y = float(parts[2])
+        width = float(parts[3])
+        height = float(parts[4])
+        assert abs(center_x - 0.3) < 0.01, f"Center x should be ~0.3, got {center_x}"
+        assert abs(center_y - 0.3) < 0.01, f"Center y should be ~0.3, got {center_y}"
+        assert abs(width - 0.2) < 0.01, f"Width should be ~0.2, got {width}"
+        assert abs(height - 0.2) < 0.01, f"Height should be ~0.2, got {height}"
+        
+        # Check that nuclei segmentation file was created (save_segmentation was called)
+        nuclei_segmentation_file = widget.nuclei_segmentation_dir / "test_image.npy"
+        assert nuclei_segmentation_file.exists(), "Nuclei segmentation file should be created by NucleiSegmentationWidget.save_segmentation()"
+        
+        # Verify segmentation file content matches original
+        saved_mask = np.load(nuclei_segmentation_file)
+        assert np.array_equal(saved_mask, test_mask), "Saved mask should match original mask"
+        assert saved_mask.shape == test_mask.shape, "Saved mask should have same shape"
+        assert saved_mask.dtype == test_mask.dtype, "Saved mask should have same dtype"
+        # Verify specific regions
+        assert np.all(saved_mask[20:30, 20:30] == 1), "First nucleus should be preserved"
+        assert np.all(saved_mask[50:60, 50:60] == 2), "Second nucleus should be preserved"
+        
+        # Verify postprocess was called
+        mock_postprocess.assert_called_once()
+        widget._update_image_list.assert_called_once()
+
+    @pytest.mark.skipif(not PYTEST_QT_AVAILABLE or not NAPARI_AVAILABLE, reason="pytest-qt or napari not available")
+    def test_save_current_image_with_real_save(self, mock_napari_viewer, temp_dir, qtbot):
+        """Test _save_current_image with actual file saving using real widget methods."""
+        if DataManagementWidget is None:
+            pytest.skip("Dependencies not available")
+        
+        # Import widgets
+        from micro_nuculei_nuclear_buds_detection._widget import DetectionWidget
+        from micro_nuculei_nuclear_buds_detection._nuclei_segmentation_widget import NucleiSegmentationWidget
+        import json
+        from micro_nuculei_nuclear_buds_detection._constants import NUCLEI_SEGMENTATION_PARAMS_PATH, NUCLEI_SEGMENTATION_PARAMS_DEFAULT
+        
+        widget = DataManagementWidget(mock_napari_viewer)
+        qtbot.addWidget(widget)
+        
+        # Set up widget state
+        widget.dataset_path = temp_dir
+        widget.annotation_dir = temp_dir / ANNOTATIONS_SUBFOLDER
+        widget.annotation_dir.mkdir(parents=True, exist_ok=True)
+        widget.nuclei_segmentation_dir = temp_dir / NUCLEI_SEGMENTATION_SUBFOLDER
+        widget.nuclei_segmentation_dir.mkdir(parents=True, exist_ok=True)
+        widget.postprocessing_dir = temp_dir / POSTPROCESSING_SUBFOLDER
+        widget.postprocessing_dir.mkdir(parents=True, exist_ok=True)
+        widget.current_image_index = 0
+        widget.image_files = [temp_dir / "test_image.tif"]
+        
+        # Create params file for segmentation widget
+        widget.nuclei_segmentation_params_path = widget.nuclei_segmentation_dir / NUCLEI_SEGMENTATION_PARAMS_PATH
+        with open(widget.nuclei_segmentation_params_path, 'w') as f:
+            json.dump(NUCLEI_SEGMENTATION_PARAMS_DEFAULT, f)
+        
+        # Create actual widgets (not mocks)
+        widget.detection_widget = DetectionWidget(mock_napari_viewer)
+        widget.detection_widget.annotation_dir = widget.annotation_dir
+        widget.detection_widget.dataset_path = widget.dataset_path
+        qtbot.addWidget(widget.detection_widget)
+        
+        widget.segmentation_widget = NucleiSegmentationWidget(mock_napari_viewer, widget.nuclei_segmentation_params_path)
+        widget.segmentation_widget.nuclei_segmentation_dir = widget.nuclei_segmentation_dir
+        widget.segmentation_widget.dataset_path = widget.dataset_path
+        qtbot.addWidget(widget.segmentation_widget)
+        
+        # Create mock image layer
+        if NAPARI_AVAILABLE:
+            image_layer = MagicMock(spec=napari.layers.Image)
+        else:
+            image_layer = MagicMock()
+        image_layer.data = np.zeros((100, 100), dtype=np.uint8)
+        mock_napari_viewer.layers = [image_layer]
+        
+        # Create annotation layer with specific test data
+        if NAPARI_AVAILABLE:
+            annotation_layer = MagicMock(spec=napari.layers.Shapes)
+        else:
+            annotation_layer = MagicMock()
+        annotation_layer.name = ANNOTATION_LAYER_NAME
+        # Create test rectangles: [[y_min, x_min], [y_max, x_min], [y_max, x_max], [y_min, x_max]]
+        # Box 1 at (10, 10) with size 15x15 (micro-nuclei)
+        # Box 2 at (60, 60) with size 20x20 (nuclear-bud)
+        test_rectangle1 = np.array([[10, 10], [25, 10], [25, 25], [10, 25]])
+        test_rectangle2 = np.array([[60, 60], [80, 60], [80, 80], [60, 80]])
+        annotation_layer.data = [test_rectangle1, test_rectangle2]
+        # Colors for different classes
+        color0 = get_napari_color(0)  # micro-nuclei
+        color1 = get_napari_color(1)  # nuclear-bud
+        annotation_layer.edge_color = np.array([
+            [color0[0], color0[1], color0[2], 1.0],
+            [color1[0], color1[1], color1[2], 1.0],
+        ])
+        mock_napari_viewer.layers.append(annotation_layer)
+        
+        # Create a mock nuclei segmentation layer with specific masks data
+        if NAPARI_AVAILABLE:
+            nuclei_layer = MagicMock(spec=napari.layers.Shapes)
+        else:
+            nuclei_layer = MagicMock()
+        nuclei_layer.name = NUCLEI_SEGMENTATION_LAYER_NAME
+        # Create a specific test mask with multiple nuclei
+        test_mask = np.zeros((100, 100), dtype=np.int32)
+        test_mask[15:25, 15:25] = 1  # Nucleus 1 at (15-25, 15-25)
+        test_mask[65:75, 65:75] = 2  # Nucleus 2 at (65-75, 65-75)
+        test_mask[40:50, 40:50] = 3  # Nucleus 3 at (40-50, 40-50)
+        nuclei_layer._masks_data = test_mask
+        mock_napari_viewer.layers.append(nuclei_layer)
+        
+        # Mock _update_image_list
+        widget._update_image_list = MagicMock()
+        
+        # Mock postprocess_detections
+        with patch('micro_nuculei_nuclear_buds_detection._data_management_widget.postprocess_detections') as mock_postprocess:
+            result = widget._save_current_image()
+        
+        # Should return True
+        assert result is True
+        
+        # Verify files were actually created by the real widget methods
+        annotation_file = widget.annotation_dir / "test_image.txt"
+        assert annotation_file.exists(), "Annotation file should be created by DetectionWidget.save_annotations()"
+        
+        # Verify annotation file content matches original
+        with open(annotation_file, 'r') as f:
+            lines = f.readlines()
+        assert len(lines) == 2, "Should have two annotations"
+        # First annotation should be class 0 (micro-nuclei)
+        parts1 = lines[0].strip().split()
+        assert parts1[0] == "0", "First annotation should be class 0"
+        # Second annotation should be class 1 (nuclear-bud)
+        parts2 = lines[1].strip().split()
+        assert parts2[0] == "1", "Second annotation should be class 1"
+        # Verify coordinates are in valid range [0, 1]
+        for parts in [parts1, parts2]:
+            center_x = float(parts[1])
+            center_y = float(parts[2])
+            width = float(parts[3])
+            height = float(parts[4])
+            assert 0.0 <= center_x <= 1.0, f"Center x should be in [0, 1], got {center_x}"
+            assert 0.0 <= center_y <= 1.0, f"Center y should be in [0, 1], got {center_y}"
+            assert 0.0 <= width <= 1.0, f"Width should be in [0, 1], got {width}"
+            assert 0.0 <= height <= 1.0, f"Height should be in [0, 1], got {height}"
+        
+        nuclei_segmentation_file = widget.nuclei_segmentation_dir / "test_image.npy"
+        assert nuclei_segmentation_file.exists(), "Nuclei segmentation file should be created by NucleiSegmentationWidget.save_segmentation()"
+        
+        # Verify segmentation file content matches original
+        saved_mask = np.load(nuclei_segmentation_file)
+        assert np.array_equal(saved_mask, test_mask), "Saved mask should match original mask exactly"
+        assert saved_mask.shape == test_mask.shape, "Saved mask should have same shape"
+        assert saved_mask.dtype == test_mask.dtype, "Saved mask should have same dtype"
+        # Verify specific regions are preserved
+        assert np.all(saved_mask[15:25, 15:25] == 1), "Nucleus 1 should be preserved"
+        assert np.all(saved_mask[65:75, 65:75] == 2), "Nucleus 2 should be preserved"
+        assert np.all(saved_mask[40:50, 40:50] == 3), "Nucleus 3 should be preserved"
+        # Verify unique labels
+        unique_labels = np.unique(saved_mask)
+        assert set(unique_labels) == {0, 1, 2, 3}, f"Should have labels 0, 1, 2, 3, got {unique_labels}"
+        
+        # Verify postprocess was called with correct arguments
+        mock_postprocess.assert_called_once()
+        call_args = mock_postprocess.call_args[0]
+        assert call_args[0] == temp_dir  # dataset_path
+        assert call_args[1] == temp_dir / "test_image.tif"  # image_path
+        assert call_args[2] == annotation_file  # annotation_file
+        assert call_args[3] == nuclei_segmentation_file  # nuclei_segmentation_file
 
